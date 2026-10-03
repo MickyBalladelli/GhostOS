@@ -79,7 +79,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
     };
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
     let target_flag = format!("--target={target}");
-    for source in ["address_space", "frame_allocator", "cow", "crash", "dlm", "capability", "contention", "dma", "dma_state", "driver_capabilities", "driver_resources", "hot_allocator", "invariants", "ipc", "keyboard", "keyboard_stub", "kernel", "litmus", "main", "micro_silo", "monitor", "mouse", "mouse_stub", "page_fault", "partition", "pci", "persistence", "persona", "physical_storage", "power", "process", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
+    for source in ["status", "boot_diagnostics", "address_space", "frame_allocator", "cow", "crash", "dlm", "capability", "contention", "dma", "dma_state", "driver_capabilities", "driver_resources", "hot_allocator", "invariants", "ipc", "keyboard", "keyboard_stub", "kernel", "litmus", "main", "micro_silo", "monitor", "mouse", "mouse_stub", "page_fault", "partition", "pci", "persistence", "persistence_records", "persona", "physical_storage", "power", "process", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
         let object = output.join(format!("ghostos-{source}.o"));
         let mut compile = Command::new(&clang);
         compile.args([
@@ -110,6 +110,7 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
         println!("cargo:rustc-link-arg={}", object.display());
         println!("cargo:rerun-if-changed={}", source_path.display());
     }
+    println!("cargo:rerun-if-changed={}", kernel.join("../c/include/ghostos/memory.h").display());
     for header in ["address_space.h", "frame_allocator.h", "cow.h", "crash.h", "dlm.h", "capability.h", "contention.h", "dma.h", "driver_capabilities.h", "hot_allocator.h", "invariants.h", "ipc.h", "keyboard.h", "keyboard_stub.h", "kernel.h", "litmus.h", "main.h", "micro_silo.h", "monitor.h", "mouse.h", "mouse_stub.h", "page_fault.h", "partition.h", "pci.h", "persistence.h", "persona.h", "physical_storage.h", "power.h", "process.h", "quota.h", "random.h", "runtime.h", "saturation.h", "scheduler.h", "shell.h", "syscall.h", "task.h", "time.h", "tlb.h", "usb_keyboard.h", "usb_keyboard_stub.h", "watchdog.h", "webauthn.h"] {
         println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{header}")).display());
     }
@@ -118,8 +119,11 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
 fn build_host_c(kernel: &Path, output: &Path, target: &str) {
     let target_flag = format!("--target={target}");
     let clang = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
+    for header in ["memory.h", "boot_diagnostics.h"] {
+        println!("cargo:rerun-if-changed={}", kernel.join(format!("../c/include/ghostos/{header}")).display());
+    }
     let mut objects = Vec::new();
-    for module in ["litmus", "driver_resources", "hot_allocator", "partition", "dma_state", "micro_silo", "invariants", "monitor", "monitor_host_stub", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
+    for module in ["status", "boot_diagnostics", "persistence_records", "litmus", "driver_resources", "hot_allocator", "partition", "dma_state", "micro_silo", "invariants", "monitor", "monitor_host_stub", "quota", "random", "runtime", "saturation", "scheduler", "shell", "syscall", "task", "time", "tlb", "usb_keyboard", "usb_keyboard_controller", "usb_keyboard_stub", "watchdog", "webauthn"] {
         let source = kernel.join(format!("../c/src/{module}.c"));
         let object = output.join(format!("ghostos-{module}-host.o"));
         run(
@@ -137,7 +141,9 @@ fn build_host_c(kernel: &Path, output: &Path, target: &str) {
         );
         objects.push(object);
         println!("cargo:rerun-if-changed={}", source.display());
-        let header = if module == "driver_resources" {
+        let header = if module == "persistence_records" {
+            "persistence.h"
+        } else if module == "driver_resources" {
             "driver_capabilities.h"
         } else if module == "dma_state" {
             "dma.h"

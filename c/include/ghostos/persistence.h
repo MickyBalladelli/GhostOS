@@ -16,4 +16,24 @@
 bool ghostos_persistence_load(uint8_t *bytes, size_t capacity, size_t *length);
 void ghostos_persistence_save(const uint8_t *bytes, size_t length);
 
+#define GHOSTOS_PERSISTENCE_BOOT_BYTES 56u
+#define GHOSTOS_PERSISTENCE_CRASH_BYTES 1024u
+#define GHOSTOS_PERSISTENCE_CONTAINER_HEADER_BYTES 24u
+#define GHOSTOS_PERSISTENCE_CONTAINER_BYTES \
+    (GHOSTOS_PERSISTENCE_CONTAINER_HEADER_BYTES + GHOSTOS_PERSISTENCE_BOOT_BYTES + GHOSTOS_PERSISTENCE_CRASH_BYTES)
+typedef struct {
+    uint8_t boot[GHOSTOS_PERSISTENCE_BOOT_BYTES];
+    size_t boot_length;
+    uint8_t crash[GHOSTOS_PERSISTENCE_CRASH_BYTES];
+    size_t crash_length;
+} ghostos_persistent_records;
+void ghostos_persistence_records_decode(const uint8_t *bytes, size_t length,
+    ghostos_persistent_records *records);
+bool ghostos_persistence_records_encode(const ghostos_persistent_records *records,
+    uint8_t *bytes, size_t capacity, size_t *length);
+bool ghostos_persistence_records_update(ghostos_persistent_records *records,
+    bool crash, const uint8_t *bytes, size_t length);
+bool ghostos_persistence_records_boot(const ghostos_persistent_records *records,
+    uint8_t *bytes, size_t capacity, size_t *length);
+
 #endif

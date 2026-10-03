@@ -393,7 +393,7 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `kernel/src/arch/riscv64.rs`
 - [x] `kernel/src/arch/unsupported.rs`
 - [x] `kernel/src/arch/x86_64.rs`
-- [x] `kernel/src/boot_diagnostics.rs`
+- [x] `kernel/src/boot_diagnostics.rs` — Active runtime transitions, attempt rollover/interruption handling, failure counts, encoding, checksums, and decoding now use C. Rust retains const public values, typed adapters, and storage orchestration. Raw-status encoding preserves directly constructed public records. Full Rust removal and behavior parity remain part of the overall migration.
 - [x] `kernel/src/boot_services.rs` — C port has the 13-service registry and dependency ordering, kernel launch callback integration, owned filesystem lifecycle, transactional first-admin provisioning and recovery, durable passkey key/counter records, filesystem-rights enforcement, and session-scoped shell authority. The C runtime consumes kernel and filesystem callbacks so platform implementations provide process launch and filesystem operations.
 - [x] `kernel/src/capability.rs`
 - [x] `kernel/src/console.rs`
@@ -418,7 +418,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/page_fault.rs` — C now owns x86 fault decoding, one-time handler install and dispatch, quota consume/refund ordering, stack-map-before-commit ordering, and COW write sequencing. Rust adapters retain the native capability, allocator, and address-space objects; moving those objects and full cutover remain.
 - [ ] `kernel/src/partition.rs` — Host and target kernel methods call C for CPU mask queries, housekeeping policy, and online/isolate/release transitions. Rust-only host fallback is removed; shared mask layout has compile-time checks. Rust retains the const constructor and typed scheduler-owned wrapper; full cutover and behavior parity remain.
 - [ ] `kernel/src/pci.rs` — C owns the x86 CF8/CFC scan and bounded 64-device inventory. Rust adapts entries to the existing boot-facing iterator and logging; driver and storage consumers still use that adapter.
-- [ ] `kernel/src/persistence.rs` — C performs bounded x86 persistence-port load/save/flush. Rust retains record-container encoding and boot/crash record policy through the C storage adapter.
+- [ ] `kernel/src/persistence.rs` — C performs bounded x86 persistence-port load/save/flush plus active SYNREC01 record encoding/decoding, FNV-1a checksums, legacy SYNCRSH1/SYNBTD01 acceptance, zero-filled slot updates, and boot-record extraction. Rust retains the slice/storage adapter and temporary record/buffer ownership; full Rust removal and behavior parity remain.
 - [x] `kernel/src/persona.rs` — C owns fixed-capacity active/disabled rights state operations. Rust keeps typed identity/right wrappers and the iterator used by scheduler and authentication callers.
 - [ ] `kernel/src/physical_storage.rs` — C selects bounded AHCI candidates and owns missing-volume policy. Rust still owns the AHCI controller, GhostFS mount, and service-image handoff because those APIs remain Rust-only.
 - [ ] `kernel/src/power.rs` — C owns checked ACPI memory/register access, ACPI enable/event/sleep/reset control, and VM shutdown/reboot fallbacks. Rust keeps ACPI table discovery and battery AML parsing through the existing power crate.
@@ -625,3 +625,24 @@ for all three targets. Litmus C/VM and x86/AArch64/RISC-V library builds also
 passed; logs are `temp/c-library-litmus-build.log`, `temp/vm-litmus-build.log`,
 and `temp/kernel-litmus-*-build.log`. RISC-V again used the verification
 wrapper. No new behavior-parity execution is claimed.
+
+Persistence/boot-diagnostic consumer progress on 2026-10-03: active SYNREC01
+container operations now use `c/src/persistence_records.c`. The C codec keeps
+the existing 24-byte header, 56-byte boot slot, 1024-byte crash slot, payload
+checksum, and legacy raw-record handling. Oversized writes stop before loading
+storage; empty updates clear only their own slot. Active boot diagnostics now
+use C transitions and the existing 56-byte diagnostic format. A separate raw
+encoder preserves the Rust public structs' ability to encode unvalidated
+status words; decoding retains status, reserved-byte, and checksum validation.
+Rust retains public const APIs and storage orchestration.
+
+`make c-library`, `cargo build -p ghostos-vm`, the full x86 kernel package,
+and the AArch64 kernel library built. C syntax checks passed on all three
+targets. Logs are `temp/c-library-boot-records-build.log`,
+`temp/vm-boot-records-build.log`, `temp/kernel-boot-records-x86-build.log`,
+`temp/kernel-boot-records-aarch64-build.log`, and
+`temp/boot-records-target-syntax.log`. The RISC-V kernel library also built
+(`temp/kernel-boot-records-riscv64-build.log`) using a recreated
+`temp/clang-riscv64-verify.py` wrapper because the previous temporary wrapper
+was absent. No behavior-parity execution is claimed; full migration remains
+open.

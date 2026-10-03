@@ -85,7 +85,7 @@ use only the freestanding foundation objects.
 | `kernel/src/page_fault.rs` (handler dispatch, stack growth and COW fault policy) | `src/page_fault.c` | `include/ghostos/page_fault.h` |
 | `kernel/src/partition.rs` (CPU online, isolation, and housekeeping policy) | `src/partition.c` | `include/ghostos/partition.h` |
 | `kernel/src/pci.rs` (x86 PCI bus scan and bounded inventory capture) | `src/pci.c` | `include/ghostos/pci.h` |
-| `kernel/src/persistence.rs` (bounded port I/O and checksummed boot/crash record container) | `src/persistence.c` | `include/ghostos/persistence.h` |
+| `kernel/src/persistence.rs` (bounded port I/O and checksummed boot/crash record container) | `src/persistence.c`, `src/persistence_records.c` | `include/ghostos/persistence.h` |
 | `kernel/src/persona.rs` (fixed-capacity active and disabled execution rights) | `src/persona.c` | `include/ghostos/persona.h` |
 | `kernel/src/physical_storage.rs` (AHCI candidate selection and expected-volume policy) | `src/physical_storage.c` | `include/ghostos/physical_storage.h` |
 | `kernel/src/power.rs` (ACPI memory/register access and VM power fallbacks) | `src/power.c` | `include/ghostos/power.h` |
@@ -478,3 +478,13 @@ Active litmus callers use C schedule generation, models, replay, and
 minimization. The checked replay API handles malformed public schedule lengths
 in execution order; Rust adapts reports and bounds panic results. Public const
 values and existing Rust contract source remain until final migration.
+
+Kernel persistence container consumers use `persistence_records.c` for
+SYNREC01 serialization, payload checksums, legacy raw-record loading, slot
+updates, and boot extraction. The hardware port remains in `persistence.c`.
+Both the record ABI and boot/crash size limits have compile-time checks.
+
+Active boot diagnostics use C attempt transitions and the 56-byte diagnostic
+codec. The raw encoder preserves public Rust records with arbitrary raw status
+words, while decode retains strict status/checksum/reserved-byte validation.
+Rust keeps const definitions, typed translation, and persistence orchestration.

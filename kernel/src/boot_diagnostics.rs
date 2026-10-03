@@ -102,141 +102,55 @@ impl BootDiagnostics {
     }
 
     pub fn begin(previous: Option<Self>) -> (Self, Option<BootAttempt>) {
-        let Some(previous) = previous else {
-            return (Self::initial(1), None)
+        let native_previous = previous.map(|diagnostics| diagnostics.to_native());
+        let mut next = NativeDiagnostics::EMPTY;
+        let mut reported = NativeAttempt::EMPTY;
+        let mut has_reported = false;
+        unsafe {
+            ghostos_boot_diagnostics_begin(native_previous.as_ref().map_or(core::ptr::null(), |value| value),
+                native_previous.is_some(), &mut next, &mut reported, &mut has_reported)
         };
-        let mut last_failure = previous.last_failure;
-        let mut reported = None;
-        let mut failure_count = previous.failure_count;
-
-        match previous.current.state {
-            BootState::Failed => {
-                last_failure = Some(previous.current);
-                reported = last_failure;
-            }
-            BootState::InProgress => {
-                let interrupted = BootAttempt {
-                    id: previous.current.id,
-                    stage: previous.current.stage,
-                    state: BootState::Failed,
-                    status: Status::BUSY.raw(),
-                    interrupted: true,
-                };
-                last_failure = Some(interrupted);
-                reported = last_failure;
-                failure_count = failure_count.saturating_add(1);
-            }
-            BootState::Succeeded => {}
-        }
-
-        let mut next = Self {
-            current: BootAttempt {
-                id: previous.current.id.saturating_add(1).max(1),
-                stage: BootStage::KernelEntry,
-                state: BootState::InProgress,
-                status: Status::PENDING.raw(),
-                interrupted: false,
-            },
-            last_failure,
-            failure_count,
-        };
-        if next.current.id == previous.current.id {
-            next.current.id = 1
-        }
-        (next, reported)
+        (next.to_public(), has_reported.then(|| reported.to_public()))
     }
 
     pub fn checkpoint(&mut self, stage: BootStage) {
-        if self.current.state == BootState::InProgress {
-            self.current.stage = stage
-        }
+        let mut native = self.to_native();
+        unsafe { ghostos_boot_diagnostics_checkpoint(&mut native, stage as u32) };
+        *self = native.to_public();
     }
 
     pub fn fail(&mut self, status: Status) {
-        if self.current.state != BootState::InProgress {
-            return
-        }
-        self.current.state = BootState::Failed;
-        self.current.status = status.raw();
-        self.current.interrupted = false;
-        self.last_failure = Some(self.current);
-        self.failure_count = self.failure_count.saturating_add(1);
+        let mut native = self.to_native();
+        unsafe { ghostos_boot_diagnostics_fail(&mut native, status.raw()) };
+        *self = native.to_public();
     }
 
     pub fn complete(&mut self) {
-        if self.current.state == BootState::InProgress {
-            self.current.state = BootState::Succeeded;
-            self.current.status = Status::NORMAL.raw();
-        }
+        let mut native = self.to_native();
+        unsafe { ghostos_boot_diagnostics_complete(&mut native) };
+        *self = native.to_public();
     }
 
     pub fn encode(&self, destination: &mut [u8]) -> Option<usize> {
-        if destination.len() < BOOT_DIAGNOSTIC_BYTES {
-            return None
-        }
-        destination[..BOOT_DIAGNOSTIC_BYTES].fill(0);
-        destination[..8].copy_from_slice(&BOOT_DIAGNOSTIC_MAGIC);
-        destination[8..10].copy_from_slice(&BOOT_DIAGNOSTIC_VERSION.to_le_bytes());
-        destination[10..12].copy_from_slice(&(BOOT_DIAGNOSTIC_BYTES as u16).to_le_bytes());
-        destination[12..20].copy_from_slice(&self.current.id.to_le_bytes());
-        destination[20] = self.current.state as u8;
-        destination[21] = self.current.stage as u8;
-        destination[22] = u8::from(self.current.interrupted);
-        destination[24..28].copy_from_slice(&self.current.status.to_le_bytes());
-        if let Some(failure) = self.last_failure {
-            destination[28..36].copy_from_slice(&failure.id.to_le_bytes());
-            destination[36] = failure.stage as u8;
-            destination[37] = u8::from(failure.interrupted);
-            destination[38..42].copy_from_slice(&failure.status.to_le_bytes());
-        }
-        destination[42..50].copy_from_slice(&self.failure_count.to_le_bytes());
-        let checksum = checksum(&destination[..50]);
-        destination[50..54].copy_from_slice(&checksum.to_le_bytes());
-        Some(BOOT_DIAGNOSTIC_BYTES)
+        let mut length = 0;
+        unsafe {
+            ghostos_boot_diagnostics_encode_raw(&self.to_native(), destination.as_mut_ptr(),
+                destination.len(), &mut length)
+        }.then_some(length)
     }
 
     pub fn decode(source: &[u8]) -> Option<Self> {
-        if source.len() < BOOT_DIAGNOSTIC_BYTES
-            || source[..8] != BOOT_DIAGNOSTIC_MAGIC
-            || u16::from_le_bytes(source[8..10].try_into().ok()?) != BOOT_DIAGNOSTIC_VERSION
-            || u16::from_le_bytes(source[10..12].try_into().ok()?)
-                != BOOT_DIAGNOSTIC_BYTES as u16
-            || u32::from_le_bytes(source[50..54].try_into().ok()?) != checksum(&source[..50])
-            || source[23] != 0
-            || source[54..BOOT_DIAGNOSTIC_BYTES].iter().any(|byte| *byte != 0)
-        {
-            return None
+        let mut native = NativeDiagnostics::EMPTY;
+        unsafe { ghostos_boot_diagnostics_decode(source.as_ptr(), source.len(), &mut native) }
+            .then(|| native.to_public())
+    }
+
+    fn to_native(self) -> NativeDiagnostics {
+        NativeDiagnostics {
+            current: NativeAttempt::from(self.current),
+            last_failure: self.last_failure.map_or(NativeAttempt::EMPTY, NativeAttempt::from),
+            has_last_failure: self.last_failure.is_some(), failure_count: self.failure_count,
         }
-        let current_id = u64::from_le_bytes(source[12..20].try_into().ok()?);
-        let current = BootAttempt {
-            id: current_id,
-            stage: BootStage::from_raw(source[21])?,
-            state: BootState::from_raw(source[20])?,
-            status: u32::from_le_bytes(source[24..28].try_into().ok()?),
-            interrupted: source[22] != 0,
-        };
-        if current.id == 0 || Status::from_raw(current.status).is_none() {
-            return None
-        }
-        let failure_id = u64::from_le_bytes(source[28..36].try_into().ok()?);
-        let last_failure = if failure_id == 0 {
-            None
-        } else {
-            let failure = BootAttempt {
-                id: failure_id,
-                stage: BootStage::from_raw(source[36])?,
-                state: BootState::Failed,
-                status: u32::from_le_bytes(source[38..42].try_into().ok()?),
-                interrupted: source[37] != 0,
-            };
-            Status::from_raw(failure.status)?;
-            Some(failure)
-        };
-        Some(Self {
-            current,
-            last_failure,
-            failure_count: u64::from_le_bytes(source[42..50].try_into().ok()?),
-        })
     }
 }
 
@@ -282,13 +196,70 @@ fn persist(diagnostics: &BootDiagnostics) {
     }
 }
 
-fn checksum(bytes: &[u8]) -> u32 {
-    let mut hash = 0x811c_9dc5_u32;
-    for byte in bytes {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(16_777_619);
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeAttempt {
+    id: u64,
+    stage: u32,
+    state: u32,
+    status: u32,
+    interrupted: bool,
+}
+
+impl NativeAttempt {
+    const EMPTY: Self = Self { id: 0, stage: 1, state: 2, status: 0, interrupted: false };
+
+    fn to_public(self) -> BootAttempt {
+        BootAttempt {
+            id: self.id,
+            stage: BootStage::from_raw(self.stage as u8).expect("native boot stage"),
+            state: BootState::from_raw(self.state as u8).expect("native boot state"),
+            status: self.status, interrupted: self.interrupted,
+        }
     }
-    hash
+}
+
+impl From<BootAttempt> for NativeAttempt {
+    fn from(attempt: BootAttempt) -> Self {
+        Self { id: attempt.id, stage: attempt.stage as u32, state: attempt.state as u32,
+            status: attempt.status, interrupted: attempt.interrupted }
+    }
+}
+
+#[repr(C)]
+struct NativeDiagnostics {
+    current: NativeAttempt,
+    last_failure: NativeAttempt,
+    has_last_failure: bool,
+    failure_count: u64,
+}
+
+impl NativeDiagnostics {
+    const EMPTY: Self = Self { current: NativeAttempt::EMPTY, last_failure: NativeAttempt::EMPTY,
+        has_last_failure: false, failure_count: 0 };
+
+    fn to_public(self) -> BootDiagnostics {
+        BootDiagnostics { current: self.current.to_public(),
+            last_failure: self.has_last_failure.then(|| self.last_failure.to_public()),
+            failure_count: self.failure_count }
+    }
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<NativeAttempt>() == 24);
+    assert!(core::mem::size_of::<NativeDiagnostics>() == 64);
+    assert!(core::mem::offset_of!(NativeDiagnostics, failure_count) == 56);
+};
+
+unsafe extern "C" {
+    fn ghostos_boot_diagnostics_begin(previous: *const NativeDiagnostics, has_previous: bool,
+        next: *mut NativeDiagnostics, reported: *mut NativeAttempt, has_reported: *mut bool);
+    fn ghostos_boot_diagnostics_checkpoint(diagnostics: *mut NativeDiagnostics, stage: u32);
+    fn ghostos_boot_diagnostics_fail(diagnostics: *mut NativeDiagnostics, status: u32);
+    fn ghostos_boot_diagnostics_complete(diagnostics: *mut NativeDiagnostics);
+    fn ghostos_boot_diagnostics_encode_raw(diagnostics: *const NativeDiagnostics, destination: *mut u8,
+        capacity: usize, length: *mut usize) -> bool;
+    fn ghostos_boot_diagnostics_decode(source: *const u8, length: usize, diagnostics: *mut NativeDiagnostics) -> bool;
 }
 
 #[cfg(test)]

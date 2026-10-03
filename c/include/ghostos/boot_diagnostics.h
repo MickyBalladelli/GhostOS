@@ -26,6 +26,8 @@ void ghostos_boot_diagnostics_checkpoint(ghostos_boot_diagnostics *diagnostics,g
 void ghostos_boot_diagnostics_fail(ghostos_boot_diagnostics *diagnostics,ghostos_status status);
 void ghostos_boot_diagnostics_complete(ghostos_boot_diagnostics *diagnostics);
 bool ghostos_boot_diagnostics_encode(const ghostos_boot_diagnostics *diagnostics,uint8_t *destination,size_t capacity,size_t *length);
+/* Public Rust records permit raw status words during encoding. */
+bool ghostos_boot_diagnostics_encode_raw(const ghostos_boot_diagnostics *diagnostics,uint8_t *destination,size_t capacity,size_t *length);
 bool ghostos_boot_diagnostics_decode(const uint8_t *source,size_t length,ghostos_boot_diagnostics *diagnostics);
 void ghostos_boot_diagnostics_set_store(ghostos_boot_diagnostic_load load,ghostos_boot_diagnostic_save save,void *context);
 bool ghostos_boot_diagnostic_begin(ghostos_boot_attempt *reported);
