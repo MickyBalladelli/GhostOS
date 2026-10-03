@@ -66,7 +66,6 @@ impl Schedule {
         }
         unsafe { ghostos_litmus_schedule_push(self, actor) }
     }
-
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

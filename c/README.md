@@ -69,7 +69,7 @@ use only the freestanding foundation objects.
 | `kernel/src/crash.rs` (capsule encoding, build identity, one-time guard) | `src/crash.c` | `include/ghostos/crash.h` |
 | `kernel/src/dlm.rs` (node/federation fences, range lock manager) | `src/dlm.c` | `include/ghostos/dlm.h` |
 | `kernel/src/dma.rs` (active caller-owned mapping tables, staged allocation, capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c`, `src/dma_state.c` | `include/ghostos/dma.h` |
-| `kernel/src/driver_capabilities.rs` | `src/driver_capabilities.c` | `include/ghostos/driver_capabilities.h` |
+| `kernel/src/driver_capabilities.rs` | `src/driver_capabilities.c`, `src/driver_resources.c` | `include/ghostos/driver_capabilities.h` |
 | `kernel/src/hot_allocator.rs` | `src/hot_allocator.c` | `include/ghostos/hot_allocator.h` |
 | `kernel/src/invariants.rs` (active address-space/page-table checks and failure formatting; const APIs/panic policy stay in Rust) | `src/invariants.c` | `include/ghostos/invariants.h` |
 | `kernel/src/ipc.rs` | `src/ipc.c` | `include/ghostos/ipc.h` |
@@ -462,3 +462,19 @@ commits after Rust capability checks and IOMMU approval. IOMMU calls remain
 outside the C stack, preserving host unwind behavior. Generic capacities are
 not capped by the standalone C manager's 256 slots. CPU partition queries and
 transitions also use C in host builds, including VM consumers.
+
+Active hot allocator consumers use borrowed C views over their generic
+kind/node/CPU pool arrays. Fixed-capacity standalone callers use the same C
+allocation, reclaim, and reporting core with explicit array strides. Rust
+retains ownership-token types, const APIs, remote-memory trace emission, and
+conversion of checked arithmetic failures into host-compatible panics.
+
+`driver_resources.c` owns PCI role/BAR matching, range validation, MMIO
+placement, image-overlap checks, and resource manifest appends. Kernel
+adapters retain capability minting so native error details and partial-grant
+side effects remain intact. Standalone grants share this selection policy.
+
+Active litmus callers use C schedule generation, models, replay, and
+minimization. The checked replay API handles malformed public schedule lengths
+in execution order; Rust adapts reports and bounds panic results. Public const
+values and existing Rust contract source remain until final migration.

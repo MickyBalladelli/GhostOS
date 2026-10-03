@@ -402,14 +402,14 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `kernel/src/crash.rs` — kernel builds and links the C capsule encoder and one-time crash guard; the kernel supplies register, capability, scheduler, audit, and persistence data.
 - [ ] `kernel/src/dlm.rs` — C fence tables, capability checked range locks, lease epochs, FIFO promotion, and contention reports are implemented and built. Shell diagnostics read the C singleton, but kernel lock operations still use the Rust manager; complete consumer cutover and behavior parity remain.
 - [ ] `kernel/src/dma.rs` — Active callers use C-owned mapping records, request/buffer validation, IOVA allocation, ID generation, exact owner/authority checks, lookup, and staged map/unmap commits. Caller-owned arrays preserve zero and arbitrary generic capacities. Rust retains capability-space checks, typed public/const APIs, and IOMMU trait calls outside C, preserving host unwinding and commit-after-approval ordering. Behavior parity and full Rust removal remain.
-- [ ] `kernel/src/driver_capabilities.rs` — C port builds driver resource manifests, creates DMA/MMIO capabilities, and assigns validated MMIO mappings from the PCI inventory. Rust kernel callers remain active; behavior parity and consumer cutover remain.
-- [ ] `kernel/src/hot_allocator.rs` — C port implements bounded per-CPU/per-node object pools, local and remote fallback, reclaim validation, placement/probe counters, and fragmentation reports. Rust kernel callers remain active; behavior parity and consumer cutover remain.
+- [ ] `kernel/src/driver_capabilities.rs` — Active callers use C PCI role/BAR selection, range validation, MMIO placement, image-overlap checks, and manifest creation. Standalone and active consumers share the same selection implementation. Rust retains PCI type translation, capability minting/error propagation, and the typed mapping list; capacity-before-range checks and partial-grant side effects are preserved. Shared layouts and MMIO/image constants have compile-time checks. Behavior parity and full cutover remain.
+- [ ] `kernel/src/hot_allocator.rs` — Active callers use C pool bitmaps, allocation/fallback order, reclaim checks, counters, and fragmentation reports. A shared borrowed view supports generic CPU/node capacities without the standalone C limits. Rust retains typed ownership tokens, public const accessors/stats constructors, remote-memory tracing, and checked-overflow/zero-divisor panic conversion. Host/VM and all three target library builds pass; behavior parity and full Rust removal remain.
 - [ ] `kernel/src/invariants.rs` — Active address-space checks, page-table-transition checks, and redacted failure formatting now call C in host and target kernels. Host native-library metadata includes the C module for VM consumers. Rust keeps the public const catalogue/IDs/failure constructors, const interrupt check, and debug panic policy to preserve const APIs and host unwinding. x86 image, AArch64 library, and RISC-V library builds pass; behavior parity and full cutover remain.
 - [ ] `kernel/src/ipc.rs` — C port implements bounded lock-free MPMC channels, capability-checked send/receive and transfers, quotas, mapped endpoints, close/owner cleanup, partition and scheduler callbacks, diagnostics, and stuck reports. Rust kernel consumers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/keyboard.rs` — Active x86 kernel and shell keyboard callers now use C controller setup, native port I/O, Set 1 decoding, modifier state, four-byte navigation queues, ACK filtering, mouse-byte delivery, and the serialized C boot singleton. Rust retains checked-layout instance/callback-table wrappers and the mouse API callback. The x86 kernel and boot shell build; hardware behavior parity, Rust wrapper removal, and full cutover remain.
 - [ ] `kernel/src/keyboard_stub.rs` — C stub initializes empty state and always reports no key, matching non-x86 kernel behavior. Rust callers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/lib.rs` — C port adds the aggregate C kernel API, callback-driven boot coordinator, boot validation and stage reporting, dispatch boundary, service readiness, fatal/crash path, and login throttling/session/quote state. The Rust syscall dispatcher, hardware consumers, process/scheduler integration, and shell remain active; parity and consumer cutover remain.
-- [ ] `kernel/src/litmus.rs` — C port includes deterministic seeded schedules, all six kernel ordering models, fault replay, and failure minimization. Rust callers remain active; behavior parity and caller cutover remain.
+- [ ] `kernel/src/litmus.rs` — Active callers use C schedule append, deterministic seeded generation, all six ordering models, fault replay, and failure minimization. Rust retains typed/const public values and translates C reports and bounds failures. The checked replay bridge preserves oversized public schedules that stop early without failure, and reports bounds panics when execution or minimization would index beyond storage. Behavior parity and full Rust removal remain.
 - [ ] `kernel/src/main.rs` — C port owns the target `_start` entry symbol and forwards boot info to `kernel_entry`. Rust keeps only the compiler-required panic ABI hook, which forwards to kernel panic reporting; full panic-handler cutover remains.
 - [ ] `kernel/src/micro_silo.rs` — Active callers use C hardware protection, non-overlapping memory maps, borrowed-range cleanup, and address lookup. Caller-owned tables preserve zero and arbitrary capacities, kernel address-space acceptance, directly constructed ranges, and debug overflow ordering. Public const APIs remain Rust; behavior parity and full cutover remain.
 - [ ] `kernel/src/monitor.rs` — C owns process snapshots, switch-history CPU utilization, lock-summary aggregation, DSM page stats, and all four text renderers. The Rust module now only marshals scheduler/DLM data across the C ABI and retains the view state; shell integration remains Rust, and behavior parity still needs verification.
@@ -604,3 +604,22 @@ No behavior-parity execution is claimed; full migration remains open.
 Logs are in `temp/c-library-dma-partition-build.log`,
 `temp/kernel-dma-state-build.log`, `temp/vm-dma-partition-build.log`, and
 `temp/kernel-dma-partition-x86-build.log`.
+
+Allocator/driver/litmus consumer progress on 2026-10-03: active hot-object
+allocator and driver resource policy now use C. Generic allocator views retain
+CPU/node bounds, u8 node-count/fallback conversion, saturating probe counters,
+reclaim accounting, and tracing semantics. Driver selection preserves role and
+BAR matching, capacity-before-range ordering, missing-MMIO resources, and
+partial capability grants. C driver selection is shared by standalone and
+kernel consumers. Active litmus callers also use C seeded scheduling and all
+six replay/minimization models; Rust retains typed reports and public-field
+bounds panic handling. These are consumer cutovers, not full Rust removal.
+
+`make c-library`, VM builds, and x86/AArch64/RISC-V kernel library builds passed
+for the allocator and driver ports. RISC-V used the existing temporary LLVM
+verification wrapper. Logs are in `temp/c-library-hot-allocator-build.log`,
+`temp/vm-hot-allocator-build.log`, `temp/kernel-hot-allocator-*-build.log`,
+`temp/c-library-driver-resources-build.log`, `temp/vm-driver-resources-build.log`,
+and `temp/kernel-driver-resources-*-build.log`. C syntax checks also passed
+for all three targets. Litmus build verification is being completed. No new
+behavior-parity execution is claimed.
