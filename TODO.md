@@ -545,7 +545,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/pkg/` — package management and signatures.
 - [ ] `crates/platform-io/` — C owns active asynchronous queue metadata, round-robin cursors, generation-tagged token validation, submit/dispatch/complete/poll/cancel state transitions, pending counts, and I/O/media buffer/format/plane/access validation. Rust retains generic request/response payloads, public wrappers, NUMA logging, const helpers, and status conversion. All four existing queue model cases have C source; behavior parity, Rust build/adapters, and full removal remain.
 - [ ] `crates/policy/` — C owns active caller-owned principal/object/binding storage, insertion and replacement, snapshot fingerprints, and all five read-only change simulations. Authentication, package, network, storage, update, and VM consumers build with checked-layout Rust adapters. Stable affected-entry ordering/de-duplication and source error precedence are retained; all three existing fixtures have C source. Rust public types/const constructors/report conversion/debug views, build adapters, behavior parity, and full removal remain.
-- [ ] `crates/posix-compat/` — POSIX compatibility.
+- [ ] `crates/posix-compat/` — Active descriptor allocation, access checks, offsets, removal, and `/proc`, `/sys`, `/dev` path parsing now use C. Rust retains runtime file ownership, service calls, ABI dispatch, resolvers, and public types. Full cutover and behavior parity remain.
 - [ ] `crates/power/` — power management.
 - [ ] `crates/protocol/` — Active transport guards now store checked-layout C state and call C for construction, class validation, version negotiation, message limits, replay protection, authentication lockout, backpressure reserve/release, and disconnect/retry scheduling. HTTP, SDK, fabric, mesh, web terminal, and VM consumers build. Rust keeps public const limits/version helpers/getters/reconnect reset and typed error adapters; behavior parity, Rust build removal, and full cutover remain.
 - [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. C also owns budget prediction/threshold decisions, workload insertion/removal, eviction selection, and approved-eviction commits. C now also owns dirty-page tables, flush-state transitions, clean-slot cleanup, recovery reset/generation updates, and AER isolation decisions. Rust retains typed/const APIs, trace emission, controller/journal calls, last-reading/generation storage, marker conversion, and storage actions. The existing three RAS fixtures and a flush-state regression have C source. Behavior parity and full removal remain.
@@ -707,3 +707,18 @@ registered. Logs are `temp/c-library-ras-persistent-build.log`,
 `temp/ras-persistent-target-syntax.log`, and
 `temp/ras-contract-source-syntax.log`. Full Rust removal and behavior parity
 remain open.
+
+POSIX compatibility progress on 2026-10-03: caller-owned C tables now handle
+free-slot lookup, descriptor allocation, access checks, offsets, and removal.
+Rust retains opaque runtime File values and service calls; failed closes keep
+the descriptor. Generic and zero capacities remain supported. C also maps
+/proc, /sys, and /dev paths to logical names, preserving mount matching,
+component rejection, ASCII mapping, and validation/length error ordering.
+
+`make c-library` and host/x86/AArch64/RISC-V POSIX library builds passed.
+RISC-V used the temporary Clang/LLVM wrapper. Strict freestanding C syntax
+checks passed for all three targets. Logs are
+`temp/c-library-posix-build.log`, `temp/posix-native-build.log`,
+`temp/posix-x86-build.log`, `temp/posix-aarch64-build.log`, and
+`temp/posix-riscv-build.log`. No behavior-parity execution is claimed;
+remaining ABI dispatch, resolver, and runtime integration still use Rust.
