@@ -210,3 +210,6 @@ $(BUILD_DIR)/hdm-contracts: c/tests/hdm_contracts.c $(BUILD_DIR)/libghostos.a $(
 
 $(BUILD_DIR)/fsd-lock-contracts: c/tests/fsd_lock_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
+
+$(BUILD_DIR)/fsd-namespace-contracts: c/tests/fsd_namespace_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
