@@ -4,8 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 /* Result: 0 success, 1 not found, 2 not a directory, 3 already exists,
-   4 invalid path, 5 capacity, 6 version overflow. Rename moves the latest
-   record. A directory also moves its latest descendants. Older versions stay. */
+   4 invalid path, 5 capacity. Rename moves the latest record. A directory
+   also moves its latest descendants. Older versions stay. */
 enum { GHOSTOS_VOLUME_RENAME_PATH = 192 };
 typedef struct {
     uint8_t name[GHOSTOS_VOLUME_RENAME_PATH];
