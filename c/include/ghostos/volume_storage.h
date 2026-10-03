@@ -21,4 +21,16 @@ int ghostos_volume_storage_flush(const ghostos_volume_mutation *mutation,
     ghostos_volume *banks, uint64_t next_checkpoint,
     const ghostos_volume_storage_io *io, uint8_t *map, size_t map_capacity,
     uint8_t *header, size_t header_capacity, uint64_t *sequence);
+/* Load into fresh caller-owned storage, never buffers backing a live reader.
+   Reads both complete banks into staging before selection. Highest valid
+   sequence wins; equal valid sequences are corrupt. A corrupt candidate falls
+   back to the older bank. Scalar outputs publish only on success; staging,
+   arena/cache/scratch arrays may change on failure. No reservation is made;
+   the caller owns device reservation and staging lifetime.
+   staging requires 2 * (block_count + 2) * 4096 bytes and must be disjoint
+   from every destination buffer. Results use the flush code table. */
+int ghostos_volume_storage_load(ghostos_volume_mutation *mutation,
+    ghostos_volume_reader *reader, ghostos_volume *banks, uint64_t *next_checkpoint,
+    void *context, int (*read_block)(void *context, uint64_t block, uint8_t *bytes),
+    uint8_t *staging, size_t staging_capacity);
 #endif

@@ -729,4 +729,23 @@ unchanged, though the inactive disk bank can be partially overwritten. After
 flush succeeds, bank state and sequence are committed before the optional
 interruption callback, matching the post-flush crash boundary. This persists
 already-published in-memory state; it does not roll back file mutations when
-I/O fails. Device read/load callbacks and active daemon wiring remain open.
+I/O fails. Active daemon wiring and full arena consistency validation remain open.
+
+
+`ghostos_volume_storage_load` reads both complete disk banks through a caller
+read callback into a separate staging image. It rejects equal valid sequences,
+tries the newest header first, and falls back to the older bank on corrupt map,
+block, or active-tree materialization. Device read failure returns I/O without
+selecting a bank. Scratch/cache capacity failure returns capacity without
+fallback. All occupied blocks are decoded and empty slots must contain zeros.
+Full graph/ownership consistency validation remains unfinished.
+
+Load into fresh, fully configured mutation buffers, never arrays backing an
+existing reader. Staging requires `2 * (block_count + 2) * 4096` bytes, disjoint
+from all destination arrays. Success restores the active root record cache,
+reader, generation, object counter, quota limits, compact checkpoint pin table,
+next checkpoint ID, and selected bank/sequence. Scalar outputs publish only on
+success; staging, arena, caches, and scratch can change on failure. Checkpoint
+roots use the existing separate materialization API. The caller owns device
+reservation; this loader neither reserves nor releases it. The writer emits
+format 4 on the next flush. Daemon transport/device integration remains open.

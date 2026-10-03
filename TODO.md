@@ -1775,7 +1775,8 @@ C storage-tree progress on 2026-10-03:
 - [x] Connect tree mutation to the C daemon empty-write callback, record/version/quota publication, garbage collection with one arena-full retry, and checkpoint root capture.
 - [x] Add loaded-tree cache construction and pinned-root reader materialization in `c/src/volume_tree_reader.c`.
 - [x] Add real synchronous bank write/flush callbacks in `c/src/volume_storage.c`, including checkpoint roots and quota metadata.
-- [ ] Connect bank loading, full arena consistency validation, and the active service. Full migration and behavior parity remain incomplete.
+- [x] Add device read callbacks and two-bank loading into the C mutation/reader state.
+- [ ] Connect full arena consistency validation and the active service. Full migration and behavior parity remain incomplete.
 
 `make -j4 c-library` passed. Strict freestanding compilation of the tree
 module passed on x86-64, AArch64, and RISC-V. The tree, block, and record modules
@@ -1818,3 +1819,15 @@ C library build and strict freestanding compilation passed for x86-64,
 AArch64, and RISC-V. No tests were run, no `.rs` files changed, and Cargo
 was not used. Temporary build log is ready for cleanup:
 `temp/c-library-volume-storage-build.log`.
+
+C device loader progress on 2026-10-03:
+
+- [x] Add `volume_storage_load.c` to read both banks through actual C block callbacks, reject equal valid sequences, select the newest valid bank, and fall back after candidate corruption.
+- [x] Decode type maps and occupied blocks, require zero empty slots, and construct the active record cache/read view directly from the selected root.
+- [x] Restore checkpoint roots, counters, generation, quotas, and active bank state into fresh caller-owned storage. Publish scalar outputs only on success; capacity failures do not select an older bank.
+- [ ] Complete full arena consistency validation, device reservation/runtime ownership, and daemon persistence/dispatch integration. Full migration remains incomplete.
+
+C library build and strict freestanding compilation passed for x86-64,
+AArch64, and RISC-V. No tests were run, no `.rs` files changed, and Cargo
+was not used. Temporary build log is ready for cleanup:
+`temp/c-library-volume-storage-load-build.log`.
