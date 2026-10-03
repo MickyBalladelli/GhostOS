@@ -633,5 +633,22 @@ process teardown ignores release failure and clears the owner slot.
 `release_checkpoint = ghostos_fsd_checkpoint_release`, and `context` to a
 `ghostos_fsd_checkpoint_backend` holding pins, next ID, and current generation.
 Capacity and version-overflow results retain their filesystem status values.
-The full open/create/truncate path, namespace selection, service dispatch,
-tracing, and active service cutover remain unfinished.
+Storage mutation and active service dispatch remain unfinished.
+
+`fsd_open.h` implements C open/create/truncate orchestration over the managed
+handle tables, record/block reader, and C namespace. Wire flags retain their
+existing bits. Open checks requested process rights before path validation,
+strips the final version suffix for absolute namespace lookup, and also checks
+named mount prefixes. Parent creation checks directory traversal and write
+modes. Exclusive creation checks free handle capacity before existence; normal
+creation and truncation can commit before final handle allocation fails.
+Truncation checks write authority and whole-file exclusive lock conflicts on
+the resolved path. Metadata is looked up again after mutation and modes are
+checked again before installing the handle. Returned metadata is copied.
+
+Configure `write_empty` with a storage backend that performs the empty write
+and rebuilds the supplied reader before returning success. It must preserve
+versions, symlink handling, quotas, block ownership, and durability policy. The
+callback receives a borrowed path only for its synchronous call and uses the
+local daemon result code table. This change does not supply a persistent writer
+or switch the running service; those consumer tasks remain open in `TODO.md`.
