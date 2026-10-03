@@ -1704,3 +1704,6 @@ Volume-resolution and exact-read progress on 2026-10-03:
 Strict freestanding syntax checks passed for `c/src/volume_range.c` on
 x86-64, AArch64, and RISC-V. No tests were run, no Rust files were changed,
 and Cargo was not used. The full migration remains incomplete.
+
+The C library build passed after these changes. Build log:
+`temp/c-library-volume-resolve-build.log`.
