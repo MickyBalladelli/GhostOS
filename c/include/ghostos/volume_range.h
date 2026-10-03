@@ -26,6 +26,8 @@ typedef struct {
    Output changes only on success. Lookup follows the same symlink and version
    rules as whole-file and ranged reads. */
 int ghostos_volume_lookup_following(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, size_t *index);
+/* Lookup the selected record without following symlinks. */
+int ghostos_volume_lookup(const ghostos_volume_range_file *files, size_t file_count, const uint8_t *path, size_t path_length, size_t *index);
 int ghostos_volume_read_at(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint64_t offset, uint8_t *output, size_t output_capacity, size_t *read);
 /* Whole-file read also checks the record checksum and the complete chain.
    Result 6 means buffer too small; required receives the full file size after

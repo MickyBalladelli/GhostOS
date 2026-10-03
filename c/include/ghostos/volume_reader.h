@@ -26,6 +26,8 @@ int ghostos_volume_reader_init(ghostos_volume_reader *reader,
 /* Read results and output semantics match volume_range.h. */
 int ghostos_volume_reader_lookup_following(const ghostos_volume_reader *reader,
     const uint8_t *path, size_t path_length, const ghostos_volume_record **record);
+int ghostos_volume_reader_lookup(const ghostos_volume_reader *reader,
+    const uint8_t *path, size_t path_length, const ghostos_volume_record **record);
 int ghostos_volume_reader_read(const ghostos_volume_reader *reader,
     const uint8_t *path, size_t path_length, uint8_t *output,
     size_t output_capacity, size_t *read, size_t *required);

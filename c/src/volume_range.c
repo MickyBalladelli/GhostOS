@@ -212,6 +212,15 @@ static int resolve_file(const ghostos_volume_range_file *files, size_t file_coun
     return 9;
 }
 
+int ghostos_volume_lookup(const ghostos_volume_range_file *files, size_t file_count, const uint8_t *path, size_t path_length, size_t *index) {
+    size_t selected;
+    int status;
+    if (!valid_utf8(path, path_length)) return 4;
+    status = lookup_file(files, file_count, path, path_length, &selected);
+    if (status) return status;
+    *index = selected;
+    return 0;
+}
 int ghostos_volume_lookup_following(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, size_t *index) {
     size_t resolved;
     int status = resolve_file(files, file_count, blocks, block_count, path, path_length, &resolved);
