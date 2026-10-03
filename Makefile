@@ -27,7 +27,7 @@ $(BUILD_DIR)/libghostos.a: $(OBJECTS)
 	$(AR) rcs $@ $(OBJECTS)
 
 # Explicit opt-in target builds tests but does not execute them.
-c-test-binaries: $(BUILD_DIR)/policy-contracts $(BUILD_DIR)/platform-io-contracts $(BUILD_DIR)/numa-contracts $(BUILD_DIR)/time-sync-contracts $(BUILD_DIR)/admission-contracts $(BUILD_DIR)/path-pattern-contracts $(BUILD_DIR)/foundation-tests $(BUILD_DIR)/kernel-contracts $(BUILD_DIR)/kernel-frame-contracts $(BUILD_DIR)/kernel-ipc-contracts $(BUILD_DIR)/kernel-usb-keyboard-contracts $(BUILD_DIR)/kernel-watchdog-contracts
+c-test-binaries: $(BUILD_DIR)/ras-contracts $(BUILD_DIR)/policy-contracts $(BUILD_DIR)/platform-io-contracts $(BUILD_DIR)/numa-contracts $(BUILD_DIR)/time-sync-contracts $(BUILD_DIR)/admission-contracts $(BUILD_DIR)/path-pattern-contracts $(BUILD_DIR)/foundation-tests $(BUILD_DIR)/kernel-contracts $(BUILD_DIR)/kernel-frame-contracts $(BUILD_DIR)/kernel-ipc-contracts $(BUILD_DIR)/kernel-usb-keyboard-contracts $(BUILD_DIR)/kernel-watchdog-contracts
 
 c-test-support: $(BUILD_DIR)/libghostos-test-support.a
 
@@ -92,4 +92,7 @@ $(BUILD_DIR)/platform-io-contracts: c/tests/platform_io_contracts.c $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
 
 $(BUILD_DIR)/policy-contracts: c/tests/policy_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
+
+$(BUILD_DIR)/ras-contracts: c/tests/ras_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@

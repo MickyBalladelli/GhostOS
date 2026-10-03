@@ -548,7 +548,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/posix-compat/` — POSIX compatibility.
 - [ ] `crates/power/` — power management.
 - [ ] `crates/protocol/` — Active transport guards now store checked-layout C state and call C for construction, class validation, version negotiation, message limits, replay protection, authentication lockout, backpressure reserve/release, and disconnect/retry scheduling. HTTP, SDK, fabric, mesh, web terminal, and VM consumers build. Rust keeps public const limits/version helpers/getters/reconnect reset and typed error adapters; behavior parity, Rust build removal, and full cutover remain.
-- [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. C also owns budget prediction/threshold decisions, workload insertion/removal, eviction selection, and approved-eviction commits. Rust retains typed/const APIs, trace emission, controller calls, last-reading storage, persistent-pool recovery, and storage actions. Behavior parity and full removal remain.
+- [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. C also owns budget prediction/threshold decisions, workload insertion/removal, eviction selection, and approved-eviction commits. C now also owns dirty-page tables, flush-state transitions, clean-slot cleanup, recovery reset/generation updates, and AER isolation decisions. Rust retains typed/const APIs, trace emission, controller/journal calls, last-reading/generation storage, marker conversion, and storage actions. The existing three RAS fixtures and a flush-state regression have C source. Behavior parity and full removal remain.
 - [ ] `crates/rms/` — record management and storage.
 - [ ] `crates/runtime/` — core runtime.
 - [ ] `crates/service-scale/` — service scaling.
@@ -680,3 +680,30 @@ all three targets. Logs are `temp/c-library-ras-budget-build.log`,
 `temp/ras-budget-aarch64-build.log`, `temp/ras-budget-riscv64-build.log`, and
 `temp/ras-budget-target-syntax.log`. Persistent-memory recovery and full
 migration remain open; no behavior-parity execution is claimed.
+
+RAS persistent-pool progress on 2026-10-03: dirty-page insertion/replacement,
+full-table clean-slot reuse, flush selection/state updates, post-barrier cleanup,
+recovery reset, generation rollover, and AER isolation decisions now use C.
+Rust retains backend/journal trait calls, marker conversion, and public types.
+Journal write precedes flushing; barrier success precedes clean-slot removal;
+journal clear success precedes generation advancement. Zero-capacity tables
+and directly supplied recovery-marker pages remain supported.
+
+This port deliberately fixes a source-proven flush bug: the prior
+`self.pages[index].ok_or(...)?.state = ...` statements changed copied
+`DirtyPage` values. Stored entries stayed Dirty, so successful `flush_all`
+could repeat the same page forever. C now changes the stored slot to Flushing
+before calling the backend, then Clean or Failed afterward. A backend panic
+leaves it Flushing. This correction is documented separately from migration
+parity; no runtime verification was performed.
+
+`make c-library` and host/x86/AArch64/RISC-V RAS library builds passed. RISC-V
+used the temporary Clang/LLVM wrapper. All three existing RAS fixtures were
+ported to `c/tests/ras_contracts.c`, alongside a focused flush-state regression,
+and checked for C syntax only. The optional `ras-contracts` build target is
+registered. Logs are `temp/c-library-ras-persistent-build.log`,
+`temp/ras-persistent-native-build.log`, `temp/ras-persistent-x86-build.log`,
+`temp/ras-persistent-aarch64-build.log`, `temp/ras-persistent-riscv64-build.log`,
+`temp/ras-persistent-target-syntax.log`, and
+`temp/ras-contract-source-syntax.log`. Full Rust removal and behavior parity
+remain open.

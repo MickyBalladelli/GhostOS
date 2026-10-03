@@ -501,3 +501,12 @@ selection, workload tables, eviction selection, and post-approval commits.
 Rust retains controller calls and last-reading storage. Throttling precedes
 eviction, and each successful eviction commits separately, preserving partial
 failure and host unwind behavior. Public policy validation remains const Rust.
+
+RAS persistent pools now use C dirty-page tables, flush transitions, clean-slot
+cleanup, recovery reset, and generation rollover. Rust retains backend/journal
+calls and marker conversion. The port fixes the prior Rust copy-mutation bug
+that kept flushed pages Dirty: C updates the stored slot before and after the
+backend call. Barrier and journal ordering remain explicit in the adapter.
+C also decides whether AER requires reporting and segment isolation.
+The existing three RAS fixtures plus a flush-state regression are available in
+`c/tests/ras_contracts.c`; the optional `ras-contracts` target builds them.
