@@ -244,7 +244,7 @@ static int read_file(const ghostos_volume_range_file *file, const ghostos_volume
     return 0;
 }
 
-int ghostos_volume_read(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint8_t *output, size_t output_capacity, size_t *read, size_t *required) {
+int ghostos_volume_read_blocks(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint8_t *output, size_t output_capacity, size_t *read, size_t *required) {
     size_t index;
     int status = resolve_file(files, file_count, blocks, block_count, path, path_length, &index);
     if (status) return status;

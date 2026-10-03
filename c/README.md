@@ -568,7 +568,7 @@ explicit occupancy. First-match/free order, occupied closed/completed records,
 and error/commit ordering stay intact. Rust retains typed payloads and converts
 selected indices to records; views use stack space proportional to capacity.
 
-Whole-file volume reads use `ghostos_volume_read` in `volume_range.c`. The
+Whole-file block-backed volume reads use `ghostos_volume_read_blocks` in `volume_range.c`. The
 caller supplies the record checksum in `ghostos_volume_range_file.checksum`.
 The function rejects short buffers before copying, validates every block and
 the full record checksum, and rejects short, oversized, or cyclic chains.
@@ -587,3 +587,13 @@ suffix. Unlike the older contiguous-data `ghostos_volume_read_version`
 helper, it validates stored block data. Exact-version payloads, including
 symlink payloads, must be supplied through the block chain. Filesystem
 consumer integration and behavior verification remain open.
+
+`volume_reader.h` connects decoded volume records and a decoded type map to
+whole-file, ranged, and exact-version block reads. The caller supplies raw
+4096-byte blocks and storage for the borrowed file/block views. Names and data
+remain borrowed; rebuild the reader after changing records, blocks, or kinds.
+Block IDs map to the raw array at ID minus one. Non-data kinds cannot be read
+as payload blocks. Checksums and chain validation remain in the read path.
+This reader does not perform daemon capability, mode, or lock authorization.
+The contiguous snapshot live read keeps `ghostos_volume_read`; the block-backed
+read uses `ghostos_volume_read_blocks` so both APIs can link together.

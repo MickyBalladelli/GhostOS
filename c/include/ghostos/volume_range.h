@@ -28,7 +28,7 @@ int ghostos_volume_read_at(const ghostos_volume_range_file *files, size_t file_c
    lookup/type/size validation. read changes only on success. Corruption may
    leave copied bytes in output. Invalid UTF-8 paths are invalid path; invalid
    UTF-8 link targets and oversized link targets are corrupt. */
-int ghostos_volume_read(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint8_t *output, size_t output_capacity, size_t *read, size_t *required);
+int ghostos_volume_read_blocks(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint8_t *output, size_t output_capacity, size_t *read, size_t *required);
 /* Exact-version reads use the same complete-chain and checksum validation.
    Version zero is invalid. The path must have no version suffix. Symlinks are
    read as stored file bytes rather than followed, matching read_version. */

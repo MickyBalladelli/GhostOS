@@ -1699,7 +1699,8 @@ Volume-resolution and exact-read progress on 2026-10-03:
 
 - [x] Implement relative and intermediate symlink resolution for C whole-file and ranged reads. Preserve component lookup/error ordering, version selectors, UTF-8 checks, target-size bounds, path joining, and the 40-pass resolution limit. Block-backed targets use the existing checksum-validated ranged reader; inline target views remain supported.
 - [x] Add `ghostos_volume_read_version_blocks` for exact-version reads with complete-chain and record-checksum validation. Version zero is invalid; symlink payloads are read directly without following them.
-- [ ] Connect these block/record views to the C filesystem consumers and complete behavior verification. The older contiguous-data exact-version helper is still present.
+- [x] Connect decoded C volume records and raw data blocks to whole-file, ranged, and exact-version reads through `ghostos_volume_reader`.
+- [ ] Connect the reader to the filesystem daemon with capability, mode, and lock enforcement, and complete behavior verification. The older contiguous-data exact-version helper is still present.
 
 Strict freestanding syntax checks passed for `c/src/volume_range.c` on
 x86-64, AArch64, and RISC-V. No tests were run, no Rust files were changed,
@@ -1707,3 +1708,16 @@ and Cargo was not used. The full migration remains incomplete.
 
 The C library build passed after these changes. Build log:
 `temp/c-library-volume-resolve-build.log`.
+
+C filesystem read integration on 2026-10-03:
+
+- [x] Add `c/src/volume_reader.c` and `volume_reader.h` to consume decoded records, decoded type-map kinds, and raw 4096-byte blocks with caller-owned borrowed views. All three read operations use the existing resolution and checksum/chain validation. Non-data blocks cannot supply payloads. Rebuild views after storage changes.
+- [x] Fix the conflicting C `ghostos_volume_read` definitions. The snapshot API keeps its existing symbol; the new block-backed API uses `ghostos_volume_read_blocks`. Both headers and implementations now compile and link together.
+- [ ] Complete daemon integration, remaining module ports, C boot/VM/service cutover, and behavior parity. The full migration is still incomplete.
+
+`make c-library` passed. Strict freestanding compilation passed for the reader
+and range module on x86-64, AArch64, and RISC-V. Both read API headers compiled
+together, and a relocatable link of the reader, range, and snapshot objects
+passed. No tests were run. No Rust sources were changed and Cargo was not used.
+Temporary build log and link object are in `temp/c-library-volume-reader-build.log`
+and `temp/volume-reader-link.o`; they can be cleaned up.
