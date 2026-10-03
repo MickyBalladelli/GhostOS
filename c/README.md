@@ -652,3 +652,20 @@ versions, symlink handling, quotas, block ownership, and durability policy. The
 callback receives a borrowed path only for its synchronous call and uses the
 local daemon result code table. This change does not supply a persistent writer
 or switch the running service; those consumer tasks remain open in `TODO.md`.
+
+`volume_tree.h` adds C copy-on-write tree nodes using the existing `SYNT`
+leaf and branch wire layout: seven record slots, seven branch keys, and eight
+child slots. Decode checks payload checksums and named-prefix UTF-8, retaining
+all 192 bytes of each name and the native decoder's reserved/trailing-byte
+acceptance. It also retains the native acceptance of UTF-8 NUL bytes; the
+standalone record codec keeps its documented stricter NUL policy.
+
+Tree insert allocates replacement leaves and ancestors, splits full leaves
+and branches, and creates a new root when needed. Replace searches children
+in order and copies only the successful path. Both return a new root after
+success and preserve old nodes for active/checkpoint roots. Supply raw arena
+blocks, kinds, a 4080-byte payload scratch buffer, and traversal frame storage.
+Operations use caller-owned frames rather than recursion. Failure may leave
+unreachable allocated nodes; garbage collection must retain all active roots.
+Record publication, empty-write callbacks, collection/retry, and durable bank
+flush still need integration; this module does not commit a live filesystem.
