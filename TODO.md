@@ -504,7 +504,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/client-sdk/` — client SDK and wire protocol.
 - [ ] `crates/compute/` — tensor and accelerator compute.
 - [ ] `crates/durability/` — C owns active bounded trace recording and durable-write ordering/recovery verification, with a matching six-layer contract table and interruption callback API. Rust retains public enums, const contract tables, injector traits, and the typed event view (with parallel C records). Rust build/adapters, behavior parity, and full removal remain.
-- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. C CXL discovery in `c/src/cxl.c` records a Type-3 endpoint, drains it before removal, and refills a bandwidth budget. DSM remains. Rust sources were not changed.
+- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. C CXL discovery in `c/src/cxl.c` records a Type-3 endpoint, drains it before removal, and refills a bandwidth budget. C DSM framing in `c/src/dsm.c` encodes ethertype `0x88b5`, rejects an unaligned page, and reassembles three page fragments. Coherence remains. Rust sources were not changed.
 - [ ] `crates/fsd/` — filesystem daemon.
 - [ ] `crates/ghostfs/` — GhostFS storage and volume management.
 - [ ] `crates/ghostos-agent-bridge/` — C owns task-scope validation, parent and lifetime limits, expiry arithmetic, reusable grant slots, nonce and revocation wrap, consume checks, run-right unions, active-grant counts, and commit/discard decisions. Rust retains signature and lease verification, script execution, and GhostFS sandbox calls. Existing attenuation tests were executed.
@@ -1247,3 +1247,12 @@ second. `build/c/cxl-contracts` passed. `make c-library` passed, and strict
 freestanding syntax checks passed for `c/src/cxl.c` on x86-64, AArch64, and
 RISC-V. No Rust sources were edited and Cargo was not used. DSM remains. Logs:
 `temp/c-library-cxl-build.log`, `temp/cxl-contract-build.log`.
+
+DSM progress on 2026-10-03: `c/src/dsm.c` encodes a page request with ethertype
+`0x88b5` and reads the payload `fetch` back. An unaligned page address is
+corrupt. Three fragments arrive as 2, then 0, then 1, and the page is complete
+only after fragment 1. The first and last page bytes are 1 and 2.
+`build/c/dsm-contracts` passed. `make c-library` passed, and strict freestanding
+syntax checks passed for `c/src/dsm.c` on x86-64, AArch64, and RISC-V. No Rust
+sources were edited and Cargo was not used. Coherence remains. Logs:
+`temp/c-library-dsm-build.log`, `temp/dsm-contract-build.log`.
