@@ -90,8 +90,8 @@ int ghostos_volume_expand_page(const ghostos_volume_wildcard_record *records, si
     bool latest = true, have_previous = false, have_latest = false, have_file = false;
     int status = classify(pattern, pattern_length, &name_length, &version, &latest);
     int previous = -1, held = -1;
-    size_t held_cursor = 0;
-    uint8_t file_length = 0;
+    size_t held_cursor = 0, current_length = 0;
+    uint8_t current_name[GHOSTOS_VOLUME_WILDCARD_PATH];
     *written = 0;
     *next = 0;
     *has_next = false;
@@ -112,10 +112,12 @@ int ghostos_volume_expand_page(const ghostos_volume_wildcard_record *records, si
         have_previous = true;
         if (cursor >= continuation) {
             if (latest) {
-                if (!have_file || !same_file(&records[best], records[held].name, file_length)) {
+                if (!have_file || !same_file(&records[best], current_name, current_length)) {
                     if (have_latest && emit(&records[held], held_cursor, pattern, name_length, entries, capacity, written, next, has_next)) return 0;
+                    if (records[best].name_length > GHOSTOS_VOLUME_WILDCARD_PATH) return 4;
+                    for (i = 0; i < records[best].name_length; ++i) current_name[i] = records[best].name[i];
+                    current_length = records[best].name_length;
                     have_file = true;
-                    file_length = records[best].name_length;
                     have_latest = false;
                 }
                 if (ghostos_pattern_matches(pattern, name_length, records[best].name, records[best].name_length) && (!have_latest || records[held].version < records[best].version)) {
