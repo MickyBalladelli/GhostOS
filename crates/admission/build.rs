@@ -1,3 +1,6 @@
+#[path = "../../tools/c_archive.rs"]
+mod c_archive;
+
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
@@ -17,13 +20,13 @@ fn main() {
         .arg("-I").arg(&headers).arg(&source).arg("-o").arg(&object)
         .status().expect("start admission C compiler");
     assert!(status.success(), "admission C compilation failed");
-    let archiver = env::var_os("AR").unwrap_or_else(|| "ar".into());
-    let status = Command::new(archiver).arg("rcs").arg(&archive).arg(&object)
+    let status = c_archive::command(&target).arg("rcs").arg(&archive).arg(&object)
         .status().expect("start admission archiver");
     assert!(status.success(), "admission archive failed");
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed={}", headers.join("ghostos/admission.h").display());
     println!("cargo:rerun-if-changed={}", headers.join("ghostos/memory.h").display());
+    println!("cargo:rerun-if-changed={}", manifest.join("../../tools/c_archive.rs").display());
     println!("cargo:rustc-link-search=native={}", output.display());
     println!("cargo:rustc-link-lib=static=ghostos_admission");
 }
