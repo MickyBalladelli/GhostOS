@@ -15,6 +15,7 @@ static void add_streamed(uint64_t *value, size_t amount) {
     if (amount > UINT64_MAX - *value) *value = UINT64_MAX;
     else *value += amount;
 }
+static void clear(uint8_t *bytes, size_t length) {
     size_t i;
     for (i = 0; i < length; ++i) bytes[i] = 0;
 }
