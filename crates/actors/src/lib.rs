@@ -1,7 +1,10 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
-use ghostos_fabric::{AddressRange, NodeId, PAGE_SIZE, dsm::RemotePageAuthority};
+#[allow(unsafe_code)]
+mod native;
+
+use ghostos_fabric::{AddressRange, NodeId, dsm::RemotePageAuthority};
 use ghostos_ipc::{ChannelId, Envelope, SharedBuffer};
 use ghostos_status::{IntoStatus, Status};
 
@@ -52,24 +55,7 @@ impl DsmMailbox {
         local: NodeId,
         now_us: u64,
     ) -> Result<(), ActorError<core::convert::Infallible>> {
-        let last = self
-            .range
-            .end()
-            .checked_sub(1)
-            .ok_or(ActorError::InvalidMailbox)?;
-        if self.destination == local
-            || self.range.start % PAGE_SIZE != 0
-            || self.range.length % PAGE_SIZE != 0
-            || self.authority.subject != local
-            || !self.authority.write
-            || !self.authority.range.contains(self.range.start)
-            || !self.authority.range.contains(last)
-            || self.authority.lease_epoch == 0
-            || now_us >= self.authority.expires_at_us
-        {
-            return Err(ActorError::InvalidMailbox);
-        }
-        Ok(())
+        native::validate(self, local, now_us)
     }
 }
 
@@ -104,17 +90,11 @@ impl ActorMessage {
     }
 
     pub fn decode(envelope: Envelope) -> Result<Self, ActorError<core::convert::Infallible>> {
+        native::decode(envelope.words)?;
         let source_node =
             NodeId::new(envelope.words[0] as u32).ok_or(ActorError::CorruptEnvelope)?;
         let destination_node =
             NodeId::new(envelope.words[2] as u32).ok_or(ActorError::CorruptEnvelope)?;
-        if envelope.words[0] > u32::MAX as u64
-            || envelope.words[2] > u32::MAX as u64
-            || envelope.words[1] == 0
-            || envelope.words[3] == 0
-        {
-            return Err(ActorError::CorruptEnvelope);
-        }
         Ok(Self {
             source: ActorId {
                 node: source_node,
@@ -235,23 +215,8 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
         endpoint: ActorEndpoint,
         generation: u32,
     ) -> Result<ActorRef, ActorError<core::convert::Infallible>> {
-        if generation == 0 || !endpoint_matches(actor, endpoint, self.local) {
-            return Err(ActorError::InvalidEndpoint);
-        }
-        if self
-            .directory
-            .iter()
-            .flatten()
-            .any(|entry| entry.actor == actor)
-        {
-            return Err(ActorError::AlreadyRegistered);
-        }
-        let slot = self
-            .directory
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(ActorError::Capacity)?;
-        *slot = Some(DirectoryEntry {
+        let index = native::register(self, actor, endpoint, generation)?;
+        self.directory[index] = Some(DirectoryEntry {
             actor,
             endpoint,
             generation,
@@ -264,21 +229,8 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
         route: DsmMailbox,
         now_us: u64,
     ) -> Result<(), ActorError<core::convert::Infallible>> {
-        route.validate(self.local, now_us)?;
-        if self
-            .routes
-            .iter()
-            .flatten()
-            .any(|entry| entry.node == route.destination)
-        {
-            return Err(ActorError::AlreadyRegistered);
-        }
-        let slot = self
-            .routes
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(ActorError::Capacity)?;
-        *slot = Some(NodeRoute {
+        let index = native::add_route(self, route, now_us)?;
+        self.routes[index] = Some(NodeRoute {
             node: route.destination,
             supervisor: route,
         });
@@ -289,12 +241,8 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
         &self,
         actor: ActorRef,
     ) -> Result<(ActorEndpoint, u32), ActorError<core::convert::Infallible>> {
-        let entry = self
-            .directory
-            .iter()
-            .flatten()
-            .find(|entry| entry.actor == actor.id)
-            .ok_or(ActorError::NotFound)?;
+        let index = native::find(self, actor.id)?;
+        let entry = self.directory[index].expect("located actor entry");
         Ok((entry.endpoint, entry.generation))
     }
 
@@ -303,12 +251,8 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
         transport: &mut T,
         message: ActorMessage,
     ) -> Result<(), ActorError<T::Error>> {
-        let entry = self
-            .directory
-            .iter()
-            .flatten()
-            .find(|entry| entry.actor == message.destination)
-            .ok_or(ActorError::NotFound)?;
+        let index = native::find(self, message.destination).map_err(convert_infallible)?;
+        let entry = self.directory[index].expect("located actor entry");
         match entry.endpoint {
             ActorEndpoint::Local(channel) => transport
                 .send_ipc(channel, message.encode())
@@ -365,33 +309,14 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
         transport: &mut T,
         request: ActorSpawnRequest,
     ) -> Result<ActorRef, ActorError<T::Error>> {
-        if request.actor.local == 0 || request.image == 0 || request.generation == 0 {
-            return Err(ActorError::InvalidActor);
-        }
-        if self
-            .directory
-            .iter()
-            .flatten()
-            .any(|entry| entry.actor == request.actor)
-        {
-            return Err(ActorError::AlreadyRegistered);
-        }
-        let directory_slot = self
-            .directory
-            .iter()
-            .position(|entry| entry.is_none())
-            .ok_or(ActorError::Capacity)?;
-        let endpoint = if request.actor.node == self.local {
+        let plan = native::prepare(self, request.actor, request.image, request.generation)
+            .map_err(convert_infallible)?;
+        let endpoint = if plan.local {
             transport
                 .spawn_local(request)
                 .map_err(ActorError::Transport)?
         } else {
-            let route = self
-                .routes
-                .iter()
-                .flatten()
-                .find(|route| route.node == request.actor.node)
-                .ok_or(ActorError::NodeRouteMissing)?;
+            let route = self.routes[plan.route].expect("located node route");
             route
                 .supervisor
                 .validate(self.local, transport.now_us())
@@ -406,7 +331,7 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
                 .map_err(ActorError::Transport)?;
             return Err(ActorError::InvalidEndpoint);
         }
-        self.directory[directory_slot] = Some(DirectoryEntry {
+        self.directory[plan.directory] = Some(DirectoryEntry {
             actor: request.actor,
             endpoint,
             generation: request.generation,
@@ -419,11 +344,7 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
         transport: &mut T,
         actor: ActorRef,
     ) -> Result<(), ActorError<T::Error>> {
-        let index = self
-            .directory
-            .iter()
-            .position(|entry| entry.is_some_and(|entry| entry.actor == actor.id))
-            .ok_or(ActorError::NotFound)?;
+        let index = native::find(self, actor.id).map_err(convert_infallible)?;
         let entry = self.directory[index].expect("located actor entry");
         transport
             .stop_actor(entry.actor, entry.endpoint)
@@ -441,11 +362,7 @@ impl<const ACTORS: usize, const NODES: usize> ActorSystem<ACTORS, NODES> {
         &mut self,
         actor: ActorRef,
     ) -> Result<(), ActorError<core::convert::Infallible>> {
-        let index = self
-            .directory
-            .iter()
-            .position(|entry| entry.is_some_and(|entry| entry.actor == actor.id))
-            .ok_or(ActorError::NotFound)?;
+        let index = native::find(self, actor.id)?;
         self.directory[index] = None;
         Ok(())
     }
@@ -519,10 +436,7 @@ pub enum ActorPoll {
 }
 
 fn endpoint_matches(actor: ActorId, endpoint: ActorEndpoint, local: NodeId) -> bool {
-    match endpoint {
-        ActorEndpoint::Local(_) => actor.node == local,
-        ActorEndpoint::Remote(mailbox) => actor.node != local && mailbox.destination == actor.node,
-    }
+    native::endpoint_matches(actor, endpoint, local)
 }
 
 fn convert_infallible<E>(error: ActorError<core::convert::Infallible>) -> ActorError<E> {

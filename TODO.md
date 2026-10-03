@@ -494,7 +494,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 
 - [ ] `boot/uefi/` — UEFI bootloader.
 - [ ] `crates/abi/` — ABI definitions and generated ABI bindings.
-- [ ] `crates/actors/` — actor runtime.
+- [ ] `crates/actors/` — C owns mailbox validation, envelope identity checks, endpoint matching, directory and node-route slot selection, and spawn prechecks. Rust retains actor traits, transport and runtime calls, typed records, and commit points after those calls. The existing mailbox test has C source; behavior parity beyond that test and full removal remain.
 - [ ] `crates/admission/` — C owns active fixed-capacity controller state, ordered tenant/class/global budget checks, recovery reserves, bounded ancestor charging, tenant-policy validation/cycle rejection, first-free lease allocation and exact lease validation, queue/drop/retry decisions, saturating counters/sequences, and reports. Backup, inspection, package, and storage consumers use allocation-free Rust type adapters. All three existing cases have C source; const API wrappers, Rust build/adapters, behavior parity, and full removal remain.
 - [ ] `crates/api-compat/` — Active contract checks and exact-version migration decisions call the existing C compatibility implementation through a value-only bridge. Public Rust const contracts, version helpers, migration strings, formatting, and result/error wrappers remain. Consumer builds pass; behavior parity and complete Rust removal remain.
 - [ ] `crates/app/` — application loading, manifests, and supervision.
@@ -871,3 +871,15 @@ Full removal and executed behavior parity remain open.
 
 All six direct service-scale consumers built successfully; existing kernel
 warnings remain. Log: `temp/scale-lookup-consumer-build.log`.
+
+Actor-runtime progress on 2026-10-03: `c/src/actors.c` now owns mailbox
+validation, envelope identity checks, endpoint matching, first-free directory
+and node-route selection, and spawn prechecks. Duplicate detection still
+precedes capacity failure. Mailbox checks still reject a zero-length wrapped
+range before alignment, authority, epoch, and expiry checks, and debug address
+overflow still panics before those later checks. Remote spawn still reads the
+clock only after a route is found. Rust retains actor traits, IPC and DSM
+transport calls, typed endpoints, and directory commits after spawn or stop
+returns. The existing actor test was executed. Host, x86, AArch64, and RISC-V
+syntax checks and the balancer consumer build are recorded below when present.
+Full Rust removal remains open.
