@@ -238,6 +238,8 @@ const _: () = {
     assert!(crate::SERVICE_CODE_PAGE_COUNT == 19);
     assert!(crate::SERVICE_STACK_PAGE_COUNT == 16);
     assert!(crate::FRAME_SIZE == 4096);
+    assert!(crate::USER_SPACE_START == 0x0000_0080_0000_0000);
+    assert!(SERVICE_MMIO_BASE == 0x0000_0080_0003_0000);
 };
 
 unsafe extern "C" {

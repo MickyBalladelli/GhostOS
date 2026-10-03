@@ -74,6 +74,7 @@ static uint32_t device_id(const ghostos_pci_device *device) {
 }
 
 
+_Static_assert(GHOSTOS_SERVICE_MMIO_BASE == UINT64_C(0x0000008000030000), "driver MMIO base");
 _Static_assert(sizeof(ghostos_pci_device) == 112, "driver PCI ABI");
 _Static_assert(offsetof(ghostos_pci_device, bars) == 16, "driver BAR ABI");
 _Static_assert(sizeof(ghostos_driver_candidate) == 40, "driver selection ABI");
