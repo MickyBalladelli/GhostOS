@@ -1,10 +1,5 @@
 #include "ghostos/fsd_namespace.h"
 #include <assert.h>
-static size_t text_length(const char *text) {
-    size_t length = 0;
-    while (text[length]) ++length;
-    return length;
-}
 static void data_resolves_under_its_mount_and_cannot_be_removed(void) {
     ghostos_fsd_namespace namespace;
     ghostos_fsd_mount mounts[5];
