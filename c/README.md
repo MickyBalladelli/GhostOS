@@ -574,6 +574,16 @@ The function rejects short buffers before copying, validates every block and
 the full record checksum, and rejects short, oversized, or cyclic chains.
 The required size is reported separately; the read count changes only on
 success. Existing ranged reads still allow a partial buffer. Both APIs share
-the existing resolver, which currently follows only absolute symlinks at the
-complete path. Relative links, intermediate links, and filesystem consumer
-integration still need porting.
+component-by-component resolution for relative and absolute symlinks, with a
+40-pass limit. Targets may come from checksum-validated blocks or the inline
+data view. Invalid UTF-8 input paths are invalid paths; invalid UTF-8 or
+oversized link targets are corrupt. Joining preserves the existing path
+component rules, version selectors, and lookup error ordering.
+
+`ghostos_volume_read_version_blocks` reads a selected nonzero version from
+the same block/record views and validates the complete chain and record
+checksum. It does not follow symlinks, and its path must have no version
+suffix. Unlike the older contiguous-data `ghostos_volume_read_version`
+helper, it validates stored block data. Exact-version payloads, including
+symlink payloads, must be supplied through the block chain. Filesystem
+consumer integration and behavior verification remain open.

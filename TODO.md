@@ -1694,3 +1694,13 @@ on success. Ranged reads and whole-file reads share the existing resolver.
 Rust sources were not changed and Cargo was not used. Relative/intermediate
 symlink resolution, consumer integration, behavior parity, and the full
 migration remain open. Build log: `temp/c-library-volume-read-build.log`.
+
+Volume-resolution and exact-read progress on 2026-10-03:
+
+- [x] Implement relative and intermediate symlink resolution for C whole-file and ranged reads. Preserve component lookup/error ordering, version selectors, UTF-8 checks, target-size bounds, path joining, and the 40-pass resolution limit. Block-backed targets use the existing checksum-validated ranged reader; inline target views remain supported.
+- [x] Add `ghostos_volume_read_version_blocks` for exact-version reads with complete-chain and record-checksum validation. Version zero is invalid; symlink payloads are read directly without following them.
+- [ ] Connect these block/record views to the C filesystem consumers and complete behavior verification. The older contiguous-data exact-version helper is still present.
+
+Strict freestanding syntax checks passed for `c/src/volume_range.c` on
+x86-64, AArch64, and RISC-V. No tests were run, no Rust files were changed,
+and Cargo was not used. The full migration remains incomplete.

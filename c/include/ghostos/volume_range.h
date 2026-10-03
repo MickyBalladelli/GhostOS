@@ -5,7 +5,9 @@
 #include <stdint.h>
 /* Result: 0 success, 1 not found, 2 not a directory, 3 invalid version,
    4 invalid path, 5 corrupt, 9 symlink loop. An offset past the file is an
-   invalid version. A short buffer copies only what fits. A symlink is followed. */
+   invalid version. A short buffer copies only what fits. Relative and absolute
+   symlinks in any component are followed, up to 40 resolution passes. Targets
+   use first_block when nonzero; otherwise data supplies inline target bytes. */
 typedef struct {
     const uint8_t *bytes;
     uint16_t length;
@@ -24,7 +26,11 @@ int ghostos_volume_read_at(const ghostos_volume_range_file *files, size_t file_c
 /* Whole-file read also checks the record checksum and the complete chain.
    Result 6 means buffer too small; required receives the full file size after
    lookup/type/size validation. read changes only on success. Corruption may
-   leave copied bytes in output. Resolution currently follows absolute links
-   at the complete path only; relative and intermediate links remain pending. */
+   leave copied bytes in output. Invalid UTF-8 paths are invalid path; invalid
+   UTF-8 link targets and oversized link targets are corrupt. */
 int ghostos_volume_read(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint8_t *output, size_t output_capacity, size_t *read, size_t *required);
+/* Exact-version reads use the same complete-chain and checksum validation.
+   Version zero is invalid. The path must have no version suffix. Symlinks are
+   read as stored file bytes rather than followed, matching read_version. */
+int ghostos_volume_read_version_blocks(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint32_t version, uint8_t *output, size_t output_capacity, size_t *read, size_t *required);
 #endif
