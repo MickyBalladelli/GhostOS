@@ -633,7 +633,8 @@ process teardown ignores release failure and clears the owner slot.
 `release_checkpoint = ghostos_fsd_checkpoint_release`, and `context` to a
 `ghostos_fsd_checkpoint_backend` holding pins, next ID, and current generation.
 Capacity and version-overflow results retain their filesystem status values.
-Storage mutation and active service dispatch remain unfinished.
+Raw-storage checkpoints also capture the current tree root when the backend
+root pointer is configured. Active service dispatch remains unfinished.
 
 `fsd_open.h` implements C open/create/truncate orchestration over the managed
 handle tables, record/block reader, and C namespace. Wire flags retain their
@@ -667,5 +668,23 @@ success and preserve old nodes for active/checkpoint roots. Supply raw arena
 blocks, kinds, a 4080-byte payload scratch buffer, and traversal frame storage.
 Operations use caller-owned frames rather than recursion. Failure may leave
 unreachable allocated nodes; garbage collection must retain all active roots.
-Record publication, empty-write callbacks, collection/retry, and durable bank
-flush still need integration; this module does not commit a live filesystem.
+`volume_mutation.h` connects tree mutations to empty-file creation/truncation.
+Initialize it with the complete active root's decoded record cache (including
+retained and deleted versions), record/quota/reader arrays, tree scratch, and
+GC mark/pending arrays sized for every arena block. Arrays and raw storage must
+not overlap. The cache must match the active root. Configure
+`write_empty = ghostos_fsd_storage_write_empty` and its context to the initialized
+mutation backend. Success publishes the record, root, generation, and rebuilt
+reader. It preserves final symlink following, parent-directory checks, quota
+ordering, object IDs, version increments, and empty version-one replacement.
+Failures can consume an object ID. Arena exhaustion collects unreachable
+blocks and retries once; other failures collect without replacing the error.
+
+Collection traces the active root and occupied checkpoint roots, branch
+children, live record data, and data-chain successors. It zeros reclaimed raw
+blocks. Corrupt reachable payloads stop collection before sweeping. Supply the
+same pin table to the writer and resource manager, using
+`ghostos_fsd_storage_checkpoints` to capture both generation and root. A
+checkpoint backend that only captures generations cannot retain raw old roots.
+Checkpoint reader materialization, durable bank flush, load integration, and
+active service dispatch remain unfinished. These writes publish in memory.

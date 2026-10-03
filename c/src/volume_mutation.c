@@ -136,7 +136,9 @@ static int write_empty_uncommitted(ghostos_volume_mutation *volume,
 int ghostos_volume_mutation_write_empty(ghostos_volume_mutation *volume,
     ghostos_volume_reader *reader, const uint8_t *path, size_t length) {
     size_t live, freed;
-    int status = write_empty_uncommitted(volume, reader, path, length);
+    int status;
+    if (!volume || !reader || (!path && length)) return GHOSTOS_VOLUME_MUTATION_INVALID;
+    status = write_empty_uncommitted(volume, reader, path, length);
     if (status == GHOSTOS_VOLUME_MUTATION_ARENA_FULL) {
         (void)ghostos_volume_mutation_collect(volume, &live, &freed);
         return write_empty_uncommitted(volume, reader, path, length);

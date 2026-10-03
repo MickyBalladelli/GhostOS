@@ -11,7 +11,7 @@ int ghostos_volume_mutation_collect(ghostos_volume_mutation *volume,
     size_t *live, size_t *freed) {
     size_t i, count = 0, kept = 0, released = 0;
     ghostos_volume_tree *tree;
-    if (!volume) return GHOSTOS_VOLUME_MUTATION_INVALID;
+    if (!volume || !live || !freed) return GHOSTOS_VOLUME_MUTATION_INVALID;
     tree = &volume->tree;
     if (tree->block_count > UINT32_MAX || tree->block_count > SIZE_MAX / GHOSTOS_VOLUME_BLOCK ||
         (tree->block_count && (!tree->blocks || !tree->kinds)) ||
@@ -37,7 +37,7 @@ int ghostos_volume_mutation_collect(ghostos_volume_mutation *volume,
         } else if (kind == 1 || kind == 2) {
             ghostos_volume_tree_node node;
             if (ghostos_volume_tree_decode(raw, GHOSTOS_VOLUME_BLOCK,
-                tree->payload, tree->payload_capacity, &node)) return 5;
+                tree->payload, tree->payload_capacity, &node) || node.kind != kind) return 5;
             if (node.kind == 1) {
                 for (i = 0; i < node.length; ++i)
                     if (!node.entries.records[i].deleted) mark(volume, node.entries.records[i].data, &count);
