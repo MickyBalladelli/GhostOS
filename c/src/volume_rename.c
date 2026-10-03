@@ -54,7 +54,7 @@ static void copy_name(ghostos_volume_rename_record *record, const uint8_t *path,
     for (i = 0; i < length; ++i) record->name[i] = path[i];
     record->name_length = (uint8_t)length;
 }
-static int target_name(const uint8_t *old_path, size_t old_length, const uint8_t *new_path, size_t new_length, const uint8_t *current, size_t current_length, uint8_t *output, size_t *output_length) {
+static int target_name(size_t old_length, const uint8_t *new_path, size_t new_length, const uint8_t *current, size_t current_length, uint8_t *output, size_t *output_length) {
     size_t i, suffix;
     if (current_length == old_length) {
         for (i = 0; i < new_length; ++i) output[i] = new_path[i];
@@ -104,7 +104,7 @@ int ghostos_volume_rename(ghostos_volume_rename_record *records, size_t count, c
             size_t renamed_length = 0, slot;
             int existing = -1;
             uint32_t version = 1;
-            int status = target_name(old_path, old_length, new_path, new_length, records[candidate].name, records[candidate].name_length, renamed, &renamed_length);
+            int status = target_name(old_length, new_path, new_length, records[candidate].name, records[candidate].name_length, renamed, &renamed_length);
             if (status) return status;
             if (latest_live(records, count, renamed, renamed_length) >= 0) return 3;
             for (slot = 0; slot < count; ++slot) if (records[slot].occupied && same_name(&records[slot], renamed, renamed_length) && records[slot].version == version) existing = (int)slot;
