@@ -509,7 +509,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostfs/` — GhostFS storage and volume management.
 - [ ] `crates/ghostos-agent-bridge/` — C owns task-scope validation, parent and lifetime limits, expiry arithmetic, reusable grant slots, nonce and revocation wrap, consume checks, run-right unions, active-grant counts, and commit/discard decisions. Rust retains signature and lease verification, script execution, and GhostFS sandbox calls. Existing attenuation tests were executed.
 - [ ] `crates/ghostos-agentd/` — agent daemon.
-- [ ] `crates/ghostos-audit/` — audit subsystem.
+- [ ] `crates/ghostos-audit/` — C owns advisory identifier checks, advisory and obsolescence slot selection, out-of-date version ordering, finding de-duplication, and scan-budget validation. Rust retains feed insertion records, withdrawn-match filtering, package iteration, and batch scheduling. No existing audit tests were present; C contract checks cover the slot rules.
 - [ ] `crates/ghostos-backup/` — backup and recovery.
 - [ ] `crates/ghostos-confidential/` — confidential computing.
 - [ ] `crates/ghostos-debug/` — debugging subsystem.
@@ -940,3 +940,20 @@ Logs: `temp/c-library-agent-build.log`, `temp/agent-test.log`,
 `temp/agent-contract-build.log`, `temp/agent-x86-build.log`,
 `temp/agent-aarch64-build.log`, and `temp/agent-riscv64-build.log`. Full Rust
 removal and broader behavior parity remain open.
+
+Audit progress on 2026-10-03: `c/src/audit.c` now owns advisory identifier
+checks, advisory and obsolescence slot selection, out-of-date version
+ordering, finding de-duplication, and scan-budget validation. Duplicate
+advisories and obsolete packages are still rejected before a full table is
+reported. A finding that does not fit still leaves earlier findings from the
+same package visit in place. Withdrawn advisories are still filtered before
+finding insertion. Rust retains feed records, package iteration, and batch
+scheduling. The audit package has no existing Rust tests; `build/c/audit-contracts`
+passed. `make c-library`, the inspection consumer, and host/x86/AArch64/RISC-V
+audit library builds passed. RISC-V used the temporary Clang/LLVM wrapper.
+Strict freestanding syntax checks passed for `c/src/audit.c` on all three
+targets. Logs: `temp/c-library-audit-build.log`, `temp/audit-test.log`,
+`temp/audit-consumer-build.log`, `temp/audit-contract-build.log`,
+`temp/audit-x86-build.log`, `temp/audit-aarch64-build.log`, and
+`temp/audit-riscv64-build.log`. Patch workflow, full Rust removal, and broader
+behavior parity remain open.

@@ -1,7 +1,10 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 use core::fmt;
+
+#[allow(unsafe_code)]
+mod native;
 
 pub mod patch_workflow;
 
@@ -47,7 +50,7 @@ pub struct AdvisoryId {
 
 impl AdvisoryId {
     pub fn new(value: &str) -> Result<Self, AuditError> {
-        if value.is_empty() || value.len() > MAX_ADVISORY_ID_BYTES || !value.is_ascii() {
+        if !crate::native::identifier(value.as_bytes()) {
             return Err(AuditError::InvalidAdvisoryId);
         }
 
@@ -174,20 +177,25 @@ impl<const CAPACITY: usize> ObsolescenceReport<CAPACITY> {
     }
 
     pub fn push(&mut self, package: ObsoletePackage) -> Result<(), AuditError> {
-        validate_obsolete(package)?;
-        if self.packages().any(|entry| {
-            entry.node == package.node
-                && entry.package == package.package
-                && entry.reason == package.reason
-        }) {
-            return Err(AuditError::DuplicateObsolete)
+        if !crate::native::obsolete_valid(
+            package.name.as_str().is_empty(),
+            reason_code(package.reason),
+            [package.installed_version.major, package.installed_version.minor, package.installed_version.patch],
+            [package.latest_version.major, package.latest_version.minor, package.latest_version.patch],
+        ) {
+            return Err(AuditError::InvalidObsolete);
         }
-        let slot = self
-            .packages
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(AuditError::ObsoleteCapacity)?;
-        *slot = Some(package);
+        let index = match crate::native::obsolete_slot(
+            &obsolete_views(&self.packages),
+            package.node.raw(),
+            package.package.as_bytes(),
+            reason_code(package.reason),
+        ) {
+            Ok(index) => index,
+            Err(1) => return Err(AuditError::DuplicateObsolete),
+            Err(_) => return Err(AuditError::ObsoleteCapacity),
+        };
+        self.packages[index] = Some(package);
         Ok(())
     }
 
@@ -243,14 +251,44 @@ impl<const CAPACITY: usize> Default for ObsolescenceRegistry<CAPACITY> {
     }
 }
 
-fn validate_obsolete(package: ObsoletePackage) -> Result<(), AuditError> {
-    if package.name.as_str().is_empty()
-        || (package.reason == ObsolescenceReason::OutOfDate
-            && package.installed_version >= package.latest_version)
-    {
-        return Err(AuditError::InvalidObsolete)
+fn reason_code(reason: ObsolescenceReason) -> u8 {
+    match reason {
+        ObsolescenceReason::Deprecated => 0,
+        ObsolescenceReason::Unmaintained => 1,
+        ObsolescenceReason::OutOfDate => 2,
     }
-    Ok(())
+}
+
+fn obsolete_views<const CAPACITY: usize>(
+    packages: &[Option<ObsoletePackage>; CAPACITY],
+) -> [crate::native::Obsolete; CAPACITY] {
+    packages.map(|package| match package {
+        Some(package) => crate::native::Obsolete {
+            node: package.node.raw(),
+            package: *package.package.as_bytes(),
+            reason: reason_code(package.reason),
+            occupied: true,
+        },
+        None => crate::native::Obsolete { node: 0, package: [0; 32], reason: 0, occupied: false },
+    })
+}
+
+fn source_code(source: AdvisorySource) -> u8 {
+    match source {
+        AdvisorySource::RustSec => 0,
+        AdvisorySource::Osv => 1,
+        AdvisorySource::Cve => 2,
+    }
+}
+
+fn severity_code(severity: Severity) -> u8 {
+    match severity {
+        Severity::Unknown => 0,
+        Severity::Low => 1,
+        Severity::Medium => 2,
+        Severity::High => 3,
+        Severity::Critical => 4,
+    }
 }
 
 /// Normalized, fixed-capacity advisory index.
@@ -277,18 +315,17 @@ impl<const CAPACITY: usize> AdvisoryCatalog<CAPACITY> {
         severity: Severity,
         withdrawn: bool,
     ) -> Result<(), AuditError> {
-        if self.records.iter().flatten().any(|record| {
-            record.source == source && record.id == id && record.package_hash == package_hash
-        }) {
-            return Err(AuditError::DuplicateAdvisory);
-        }
-
-        let slot = self
-            .records
-            .iter_mut()
-            .find(|record| record.is_none())
-            .ok_or(AuditError::AdvisoryCapacity)?;
-        *slot = Some(AdvisoryRecord {
+        let index = match crate::native::advisory_slot(
+            &self.advisory_views(),
+            source_code(source),
+            id.as_bytes(),
+            package_hash.as_bytes(),
+        ) {
+            Ok(index) => index,
+            Err(1) => return Err(AuditError::DuplicateAdvisory),
+            Err(_) => return Err(AuditError::AdvisoryCapacity),
+        };
+        self.records[index] = Some(AdvisoryRecord {
             source,
             id,
             package_hash,
@@ -296,6 +333,30 @@ impl<const CAPACITY: usize> AdvisoryCatalog<CAPACITY> {
             withdrawn,
         });
         Ok(())
+    }
+
+    fn advisory_views(&self) -> [crate::native::Advisory; CAPACITY] {
+        self.records.map(|record| match record {
+            Some(record) => {
+                let mut id = [0; 64];
+                let bytes = record.id.as_bytes();
+                id[..bytes.len()].copy_from_slice(bytes);
+                crate::native::Advisory {
+                    id,
+                    package_hash: *record.package_hash.as_bytes(),
+                    id_length: bytes.len() as u8,
+                    source: source_code(record.source),
+                    occupied: true,
+                }
+            }
+            None => crate::native::Advisory {
+                id: [0; 64],
+                package_hash: [0; 32],
+                id_length: 0,
+                source: 0,
+                occupied: false,
+            },
+        })
     }
 
     pub fn add_rustsec(
@@ -477,7 +538,7 @@ impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
         database: &Database,
         package_budget: usize,
     ) -> Result<AuditReport, AuditError> {
-        if package_budget == 0 {
+        if !crate::native::budget(package_budget) {
             return Err(AuditError::InvalidBudget);
         }
 
@@ -529,23 +590,26 @@ impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
     ) -> Result<(), AuditError> {
         let mut overflow = false;
         database.visit_matches(matched_hash, &mut |advisory| {
-            if self
-                .findings
-                .iter()
-                .flatten()
-                .any(|finding| finding.package == package && finding.advisory == advisory)
-            {
-                return;
-            }
-            if let Some(slot) = self.findings.iter_mut().find(|finding| finding.is_none()) {
-                *slot = Some(AuditFinding {
-                    package,
-                    matched_hash,
-                    hash_kind,
-                    advisory,
-                })
-            } else {
-                overflow = true
+            let code = crate::native::finding_slot(
+                &self.finding_views(),
+                package.as_bytes(),
+                source_code(advisory.source),
+                advisory.id.as_bytes(),
+                advisory.package_hash.as_bytes(),
+                severity_code(advisory.severity),
+                advisory.withdrawn,
+            );
+            match code {
+                Ok(index) => {
+                    self.findings[index] = Some(AuditFinding {
+                        package,
+                        matched_hash,
+                        hash_kind,
+                        advisory,
+                    })
+                }
+                Err(1) => {}
+                Err(_) => overflow = true,
             }
         });
         if overflow {
@@ -553,6 +617,36 @@ impl<const FINDINGS: usize> AuditDaemon<FINDINGS> {
         } else {
             Ok(())
         }
+    }
+
+    fn finding_views(&self) -> [crate::native::Finding; FINDINGS] {
+        self.findings.map(|finding| match finding {
+            Some(finding) => {
+                let mut id = [0; 64];
+                let bytes = finding.advisory.id.as_bytes();
+                id[..bytes.len()].copy_from_slice(bytes);
+                crate::native::Finding {
+                    package: *finding.package.as_bytes(),
+                    advisory_package: *finding.advisory.package_hash.as_bytes(),
+                    id,
+                    id_length: bytes.len() as u8,
+                    source: source_code(finding.advisory.source),
+                    severity: severity_code(finding.advisory.severity),
+                    withdrawn: finding.advisory.withdrawn,
+                    occupied: true,
+                }
+            }
+            None => crate::native::Finding {
+                package: [0; 32],
+                advisory_package: [0; 32],
+                id: [0; 64],
+                id_length: 0,
+                source: 0,
+                severity: 0,
+                withdrawn: false,
+                occupied: false,
+            },
+        })
     }
 }
 
