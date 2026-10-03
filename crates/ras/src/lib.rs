@@ -1,5 +1,5 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 //! Hardware reliability, availability, and serviceability primitives.
 //!
@@ -12,6 +12,9 @@ use ghostos_legacy_pc_drivers::{PciAddress, PcieAerStatus};
 use ghostos_observability::{EventField, EventKind, Level, TraceEvent, emit, field};
 use ghostos_status::{IntoStatus, Status};
 use ghostos_ghostfs::{DeviceHealth, StorageDeviceId, StoragePoolAdmin, StoragePoolError};
+
+#[allow(unsafe_code)]
+mod native;
 
 pub const DEFAULT_EVENT_CAPACITY: usize = 256;
 pub const DEFAULT_POISON_CAPACITY: usize = 128;
@@ -87,6 +90,7 @@ pub struct HardwareEvent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+#[repr(C)]
 pub struct ErrorCounters {
     pub corrected_ecc: u64,
     pub uncorrected_ecc: u64,
@@ -99,45 +103,18 @@ pub struct ErrorCounters {
 /// Bounded newest-first hardware event history. Older events are overwritten
 /// so an interrupt path never waits for a consumer.
 pub struct ErrorTelemetry<const CAPACITY: usize = DEFAULT_EVENT_CAPACITY> {
-    events: [Option<HardwareEvent>; CAPACITY],
-    cursor: usize,
-    count: usize,
-    dropped: u64,
-    next_sequence: u64,
-    counters: ErrorCounters,
+    events: [native::EventSlot; CAPACITY],
+    state: native::Telemetry,
 }
 
 impl<const CAPACITY: usize> ErrorTelemetry<CAPACITY> {
     pub const fn new() -> Self {
         assert!(CAPACITY > 0);
-        Self {
-            events: [None; CAPACITY],
-            cursor: 0,
-            count: 0,
-            dropped: 0,
-            next_sequence: 1,
-            counters: ErrorCounters {
-                corrected_ecc: 0,
-                uncorrected_ecc: 0,
-                cxl_poisoned_flits: 0,
-                aer_correctable: 0,
-                aer_non_fatal: 0,
-                aer_fatal: 0,
-            },
-        }
+        Self { events: [native::EventSlot::EMPTY; CAPACITY], state: native::Telemetry::EMPTY }
     }
 
     pub fn record(&mut self, mut event: HardwareEvent) -> u64 {
-        event.sequence = self.next_sequence;
-        self.next_sequence = self.next_sequence.wrapping_add(1).max(1);
-        if self.count == CAPACITY {
-            self.dropped = self.dropped.saturating_add(1)
-        } else {
-            self.count += 1
-        }
-        self.events[self.cursor] = Some(event);
-        self.cursor = (self.cursor + 1) % CAPACITY;
-        self.update_counters(event);
+        event.sequence = self.state.record(&mut self.events, event);
         emit(
             TraceEvent::new(event.severity.level(), EventKind::Kernel)
                 .at(event.timestamp_us)
@@ -223,44 +200,15 @@ impl<const CAPACITY: usize> ErrorTelemetry<CAPACITY> {
     }
 
     pub fn events(&self) -> impl Iterator<Item = HardwareEvent> + '_ {
-        (0..self.count).filter_map(move |offset| {
-            let index = (self.cursor + CAPACITY - 1 - offset) % CAPACITY;
-            self.events[index]
-        })
+        (0..self.state.count).filter_map(move |offset| self.state.event(&self.events, offset))
     }
 
     pub const fn dropped(&self) -> u64 {
-        self.dropped
+        self.state.dropped
     }
 
     pub const fn counters(&self) -> ErrorCounters {
-        self.counters
-    }
-
-    fn update_counters(&mut self, event: HardwareEvent) {
-        match event.source {
-            FaultSource::EccMemory => {
-                if event.severity == FaultSeverity::Corrected {
-                    self.counters.corrected_ecc = self.counters.corrected_ecc.saturating_add(1)
-                } else {
-                    self.counters.uncorrected_ecc = self.counters.uncorrected_ecc.saturating_add(1)
-                }
-            }
-            FaultSource::Cxl => {
-                self.counters.cxl_poisoned_flits =
-                    self.counters.cxl_poisoned_flits.saturating_add(1)
-            }
-            FaultSource::PcieAer => {
-                if event.severity == FaultSeverity::Corrected {
-                    self.counters.aer_correctable = self.counters.aer_correctable.saturating_add(1)
-                } else if event.severity == FaultSeverity::Error {
-                    self.counters.aer_non_fatal = self.counters.aer_non_fatal.saturating_add(1)
-                } else {
-                    self.counters.aer_fatal = self.counters.aer_fatal.saturating_add(1)
-                }
-            }
-            FaultSource::Thermal | FaultSource::Power | FaultSource::PersistentMemory => {}
-        }
+        self.state.counters
     }
 }
 
@@ -281,53 +229,39 @@ pub struct PoisonedRange {
 /// Quarantined CXL/ECC ranges. Callers must check admission before copying a
 /// page into DSM or handing it to a workload.
 pub struct PoisonTracker<const CAPACITY: usize = DEFAULT_POISON_CAPACITY> {
-    ranges: [Option<PoisonedRange>; CAPACITY],
+    ranges: [native::Poison; CAPACITY],
 }
 
 impl<const CAPACITY: usize> PoisonTracker<CAPACITY> {
     pub const fn new() -> Self {
         assert!(CAPACITY > 0);
         Self {
-            ranges: [None; CAPACITY],
+            ranges: [native::Poison::EMPTY; CAPACITY],
         }
     }
 
     pub fn quarantine(&mut self, range: PoisonedRange) -> Result<(), RasError> {
-        if range.range.start % PAGE_SIZE != 0 || range.range.length % PAGE_SIZE != 0 {
-            return Err(RasError::InvalidArgument);
+        match native::quarantine(&mut self.ranges, range) {
+            0 => Ok(()),
+            1 => Err(RasError::InvalidArgument),
+            2 => Err(RasError::AlreadyTracked),
+            3 => Err(RasError::Capacity),
+            -1 => panic!("attempt to add with overflow"),
+            _ => unreachable!("native RAS quarantine result"),
         }
-        if self
-            .ranges
-            .iter()
-            .flatten()
-            .any(|entry| entry.node == range.node && entry.range.overlaps(range.range))
-        {
-            return Err(RasError::AlreadyTracked);
-        }
-        let slot = self
-            .ranges
-            .iter_mut()
-            .find(|entry| entry.is_none())
-            .ok_or(RasError::Capacity)?;
-        *slot = Some(range);
-        Ok(())
     }
 
     pub fn admit(&self, node: NodeId, range: AddressRange) -> Result<(), RasError> {
-        if self
-            .ranges
-            .iter()
-            .flatten()
-            .any(|entry| entry.node == node && entry.range.overlaps(range))
-        {
-            Err(RasError::PoisonedMemory)
-        } else {
-            Ok(())
+        match native::admit(&self.ranges, node, range) {
+            0 => Ok(()),
+            1 => Err(RasError::PoisonedMemory),
+            -1 => panic!("attempt to add with overflow"),
+            _ => unreachable!("native RAS admission result"),
         }
     }
 
     pub fn ranges(&self) -> impl Iterator<Item = PoisonedRange> + '_ {
-        self.ranges.iter().flatten().copied()
+        self.ranges.iter().filter_map(|range| range.to_public())
     }
 }
 

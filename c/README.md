@@ -68,6 +68,7 @@ use only the freestanding foundation objects.
 | `kernel/src/console.rs` | `src/console.c` | `include/ghostos/console.h` |
 | `kernel/src/crash.rs` (capsule encoding, build identity, one-time guard) | `src/crash.c` | `include/ghostos/crash.h` |
 | `kernel/src/dlm.rs` (node/federation fences, range lock manager) | `src/dlm.c` | `include/ghostos/dlm.h` |
+| `crates/ras/` (active hardware telemetry and poisoned-memory quarantine/admission) | `src/ras.c` | `include/ghostos/ras.h` |
 | `kernel/src/dma.rs` (active caller-owned mapping tables, staged allocation, capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c`, `src/dma_state.c` | `include/ghostos/dma.h` |
 | `kernel/src/driver_capabilities.rs` | `src/driver_capabilities.c`, `src/driver_resources.c` | `include/ghostos/driver_capabilities.h` |
 | `kernel/src/hot_allocator.rs` | `src/hot_allocator.c` | `include/ghostos/hot_allocator.h` |
@@ -488,3 +489,9 @@ Active boot diagnostics use C attempt transitions and the 56-byte diagnostic
 codec. The raw encoder preserves public Rust records with arbitrary raw status
 words, while decode retains strict status/checksum/reserved-byte validation.
 Rust keeps const definitions, typed translation, and persistence orchestration.
+
+RAS consumers use caller-owned C event and poison tables with generic
+capacities. C owns ring placement, sequence IDs, saturating counters, node-scoped
+overlap validation, and quarantine insertion. Rust retains typed const APIs,
+trace emission, and debug overflow panic conversion. Budget arbitration,
+controller effects, and persistent-pool recovery remain Rust.

@@ -548,7 +548,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/posix-compat/` — POSIX compatibility.
 - [ ] `crates/power/` — power management.
 - [ ] `crates/protocol/` — Active transport guards now store checked-layout C state and call C for construction, class validation, version negotiation, message limits, replay protection, authentication lockout, backpressure reserve/release, and disconnect/retry scheduling. HTTP, SDK, fabric, mesh, web terminal, and VM consumers build. Rust keeps public const limits/version helpers/getters/reconnect reset and typed error adapters; behavior parity, Rust build removal, and full cutover remain.
-- [ ] `crates/ras/` — reliability, availability, and serviceability.
+- [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. Rust retains typed/const APIs, trace emission, controller calls, budget arbitration, persistent-pool recovery, and storage actions. Behavior parity and full removal remain.
 - [ ] `crates/rms/` — record management and storage.
 - [ ] `crates/runtime/` — core runtime.
 - [ ] `crates/service-scale/` — service scaling.
@@ -646,3 +646,19 @@ targets. Logs are `temp/c-library-boot-records-build.log`,
 `temp/clang-riscv64-verify.py` wrapper because the previous temporary wrapper
 was absent. No behavior-parity execution is claimed; full migration remains
 open.
+
+RAS consumer progress on 2026-10-03: `c/src/ras.c` now owns active hardware
+telemetry and poison tables through caller-owned storage. Rust keeps public
+const constructors/getters, typed event/range conversion, and trace emission.
+Sequence IDs wrap past zero, counter/drop updates saturate, and quarantine
+checks alignment before overlap before capacity. Poison overlap arithmetic
+follows Rust evaluation order and reports checked overflow for host panic
+conversion. Budget/controller and persistent-memory operations remain Rust.
+
+`make c-library` and `cargo build -p ghostos-ras` passed. The RAS library also
+built for x86, AArch64, and RISC-V. RISC-V used the recreated temporary LLVM
+verification wrapper. C syntax checks passed on all three targets. Logs are
+`temp/c-library-ras-build.log`, `temp/ras-native-build.log`,
+`temp/ras-x86-build.log`, `temp/ras-aarch64-build.log`,
+`temp/ras-riscv64-build.log`, and `temp/ras-target-syntax.log`.
+Behavior parity and the complete migration remain open.
