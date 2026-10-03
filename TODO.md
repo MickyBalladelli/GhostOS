@@ -504,7 +504,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/client-sdk/` — client SDK and wire protocol.
 - [ ] `crates/compute/` — tensor and accelerator compute.
 - [ ] `crates/durability/` — C owns active bounded trace recording and durable-write ordering/recovery verification, with a matching six-layer contract table and interruption callback API. Rust retains public enums, const contract tables, injector traits, and the typed event view (with parallel C records). Rust build/adapters, behavior parity, and full removal remain.
-- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. C CXL discovery in `c/src/cxl.c` records a Type-3 endpoint, drains it before removal, and refills a bandwidth budget. C DSM framing in `c/src/dsm.c` encodes ethertype `0x88b5`, rejects an unaligned page, and reassembles three page fragments. C coherence in `c/src/coherence.c` invalidates other sharers before a writable mapping and drops the lease when the owner fails. Heartbeat failure detection remains. Rust sources were not changed.
+- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. C CXL discovery in `c/src/cxl.c` records a Type-3 endpoint, drains it before removal, and refills a bandwidth budget. C DSM framing in `c/src/dsm.c` encodes ethertype `0x88b5`, rejects an unaligned page, and reassembles three page fragments. C coherence in `c/src/coherence.c` invalidates other sharers before a writable mapping and drops the lease when the owner fails. C heartbeats in `c/src/heartbeat.c` keep the 16-byte wire order, ignore an older sequence, and fail a node after two missed periods. Partition recovery remains. Rust sources were not changed.
 - [ ] `crates/fsd/` — filesystem daemon.
 - [ ] `crates/ghostfs/` — GhostFS storage and volume management.
 - [ ] `crates/ghostos-agent-bridge/` — C owns task-scope validation, parent and lifetime limits, expiry arithmetic, reusable grant slots, nonce and revocation wrap, consume checks, run-right unions, active-grant counts, and commit/discard decisions. Rust retains signature and lease verification, script execution, and GhostFS sandbox calls. Existing attenuation tests were executed.
@@ -1266,3 +1266,13 @@ freestanding syntax checks passed for `c/src/coherence.c` on x86-64, AArch64,
 and RISC-V. No Rust sources were edited and Cargo was not used. Heartbeat
 failure detection remains. Logs: `temp/c-library-coherence-build.log`,
 `temp/coherence-contract-build.log`.
+
+Heartbeat progress on 2026-10-03: `c/src/heartbeat.c` round-trips a 16-byte
+heartbeat for node 2, sequence 4, sent at 77. The local node is due at time
+100 with sequence 1. An older sequence 3 does not move the last-seen time, and
+detection at time 301 fails node 2 after 201 microseconds of silence.
+`build/c/heartbeat-contracts` passed. `make c-library` passed, and strict
+freestanding syntax checks passed for `c/src/heartbeat.c` on x86-64, AArch64,
+and RISC-V. No Rust sources were edited and Cargo was not used. Partition
+recovery remains. Logs: `temp/c-library-heartbeat-build.log`,
+`temp/heartbeat-contract-build.log`.
