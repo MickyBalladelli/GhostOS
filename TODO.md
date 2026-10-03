@@ -511,7 +511,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostos-agentd/` — agent daemon.
 - [ ] `crates/ghostos-audit/` — C owns advisory identifier checks, advisory and obsolescence slot selection, out-of-date version ordering, finding de-duplication, and scan-budget validation. Rust retains feed insertion records, withdrawn-match filtering, package iteration, and batch scheduling. No existing audit tests were present; C contract checks cover the slot rules.
 - [ ] `crates/ghostos-backup/` — backup and recovery.
-- [ ] `crates/ghostos-confidential/` — C enclave binding in `c/src/enclave.c` rejects a zero measurement, checks page-aligned ranges, selects the first free node slot, and reports whether a range is protected. C capabilities in `c/src/confidential_capability.c` issue, validate, and revoke caller-owned records, including expiry-before-authorization and epoch wrap. C fabric frames in `c/src/confidential_fabric.c` seal and open DSM packets, encode `SCF1` frames, and reject replayed nonces. Attestation quotes remain. Rust sources were not changed.
+- [ ] `crates/ghostos-confidential/` — C enclave binding in `c/src/enclave.c` rejects a zero measurement, checks page-aligned ranges, selects the first free node slot, and reports whether a range is protected. C capabilities in `c/src/confidential_capability.c` issue, validate, and revoke caller-owned records, including expiry-before-authorization and epoch wrap. C fabric frames in `c/src/confidential_fabric.c` seal and open DSM packets, encode `SCF1` frames, and reject replayed nonces. C attestation in `c/src/attestation.c` registers nodes, issues challenges, and admits HMAC quotes. Rust sources were not changed.
 - [ ] `crates/ghostos-debug/` — C probe programs in `c/src/probes.c` verify forward-only jumps, execute bounded arithmetic, and record emitted values in a ring. C GDB framing in `c/src/gdb.c` buffers partial packets, checks checksums, reads memory, and rejects writes without permission. C coredumps in `c/src/coredump.c` validate `/cores` paths and encode `SYNCORE1` metadata and page records. C remote sessions in `c/src/remote_debug.c` check the capability wire header, target, nonce, and operation rights. Signature authorization remains outside C. Rust sources were not changed.
 - [ ] `crates/ghostos-declarative/` — declarative configuration.
 - [ ] `crates/ghostos-embedded-script/` — C owns script limits, capability names, operation masks, duplicate resources, source size, and request admission. Rust retains the Rhai engine and request storage. Existing capability tests were executed.
@@ -1074,3 +1074,13 @@ x86-64, AArch64, and RISC-V. No Rust sources were edited and Cargo was not
 used. Attestation quotes remain. Logs:
 `temp/c-library-confidential-fabric-build.log` and
 `temp/confidential-fabric-contract-build.log`.
+
+Attestation progress on 2026-10-03: `c/src/attestation.c` registers a node
+before accepting a duplicate, requires a challenge before admission, and
+reports expiry before a signature check. A quote signed with the stored key
+is admitted at time 3 and rejected once the challenge expiry of 50 has passed.
+A changed signature is rejected. `build/c/attestation-contracts` passed.
+`make c-library` passed, and strict freestanding syntax checks passed for
+`c/src/attestation.c` on x86-64, AArch64, and RISC-V. No Rust sources were
+edited and Cargo was not used. Logs: `temp/c-library-attestation-build.log`
+and `temp/attestation-contract-build.log`.
