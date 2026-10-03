@@ -102,16 +102,11 @@ int ghostos_volume_rename(ghostos_volume_rename_record *records, size_t count, c
         {
             uint8_t renamed[GHOSTOS_VOLUME_RENAME_PATH];
             size_t renamed_length = 0, slot;
-            int live, existing = -1;
+            int existing = -1;
             uint32_t version = 1;
             int status = target_name(old_path, old_length, new_path, new_length, records[candidate].name, records[candidate].name_length, renamed, &renamed_length);
             if (status) return status;
             if (latest_live(records, count, renamed, renamed_length) >= 0) return 3;
-            live = latest_live(records, count, renamed, renamed_length);
-            if (live >= 0) {
-                if (records[live].version == UINT32_MAX) return 6;
-                version = records[live].version + 1;
-            }
             for (slot = 0; slot < count; ++slot) if (records[slot].occupied && same_name(&records[slot], renamed, renamed_length) && records[slot].version == version) existing = (int)slot;
             if (existing < 0) {
                 for (slot = 0; slot < count; ++slot) if (!records[slot].occupied) { existing = (int)slot; break; }
