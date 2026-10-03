@@ -98,6 +98,9 @@ fn build_crash_port(kernel: &Path, output: &Path, target_arch: &str) {
         if target_arch == "x86_64" {
             compile.arg("-mno-red-zone");
         }
+        if env::var("TARGET").as_deref() == Ok("riscv64gc-unknown-none-elf") {
+            compile.args(["-march=rv64gc", "-mabi=lp64d"]);
+        }
         let source_path = kernel.join(format!("../c/src/{source}.c"));
         run(
             compile.arg("-I").arg(kernel.join("../c/include"))

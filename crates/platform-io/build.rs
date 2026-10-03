@@ -14,8 +14,9 @@ fn main() {
     let archive = output.join("libghostos_platform_io.a");
     let target = env::var("TARGET").expect("target triple");
     let compiler = env::var_os("CLANG").unwrap_or_else(|| "clang".into());
-    let status = Command::new(compiler)
-        .arg(format!("--target={target}"))
+    let mut compile = Command::new(compiler);
+    c_archive::configure_compiler(&mut compile, &target);
+    let status = compile
         .args(["-std=c11", "-O2", "-ffreestanding", "-fno-builtin", "-Wall", "-Wextra", "-Werror", "-c"])
         .arg("-I").arg(&headers).arg(&source).arg("-o").arg(&object)
         .status().expect("start platform_io C compiler");

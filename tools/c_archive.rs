@@ -1,4 +1,4 @@
-//! Archive selection for the temporary Rust adapters to freestanding C ports.
+//! Archive and compiler target selection for the temporary Rust adapters to freestanding C ports.
 
 use std::env;
 use std::path::PathBuf;
@@ -31,4 +31,14 @@ pub fn command(target: &str) -> Command {
     };
     command.arg(if target.ends_with("-msvc") { "--format=coff" } else { "--format=gnu" });
     command
+}
+
+pub fn configure_compiler(command: &mut Command, target: &str) {
+    if target == "riscv64gc-unknown-none-elf" {
+        // Rust's target specification uses RV64IMAFDC and the lp64d ABI. Clang
+        // takes the base architecture in its triple and the ISA in -march.
+        command.args(["--target=riscv64-unknown-none-elf", "-march=rv64gc", "-mabi=lp64d"]);
+    } else {
+        command.arg(format!("--target={target}"));
+    }
 }
