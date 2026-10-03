@@ -185,7 +185,8 @@ ghostos_fsd_read_state ghostos_fsd_handles_read_state(const ghostos_fsd_handles 
 }
 ghostos_status ghostos_fsd_handles_status(int result) {
     if (result == GHOSTOS_FSD_HANDLES_PROCESS_FULL || result == GHOSTOS_FSD_HANDLES_FILE_FULL ||
-        result == GHOSTOS_FSD_HANDLES_LOCK_FULL || result == GHOSTOS_FSD_HANDLES_SNAPSHOT_FULL)
+        result == GHOSTOS_FSD_HANDLES_LOCK_FULL || result == GHOSTOS_FSD_HANDLES_SNAPSHOT_FULL ||
+        result == GHOSTOS_FSD_HANDLES_STORAGE_FULL)
         return GHOSTOS_STATUS_NO_SPACE;
     if (result == GHOSTOS_FSD_HANDLES_READ_ONLY) return GHOSTOS_STATUS_READ_ONLY;
     if (result == GHOSTOS_FSD_HANDLES_VERSION_OVERFLOW)
