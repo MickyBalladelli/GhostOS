@@ -1450,3 +1450,14 @@ and strict freestanding syntax checks passed for `c/src/volume_superblock.c` on
 x86-64, AArch64, and RISC-V. No Rust sources were edited and Cargo was not
 used. Device flush remains. Logs: `temp/c-library-volume-checkpoint-build.log`,
 `temp/volume-checkpoint-contract-build.log`.
+
+Device-flush progress on 2026-10-03: `c/src/volume_device.c` writes the type
+map, then the data block, then the superblock, and records the durability
+flush before sequence 2 becomes active. A failed write or flush leaves the
+sequence unchanged. An interruption after the flush still publishes sequence 3.
+A rooted generation 0 is corrupt. `build/c/volume-device-contracts` passed.
+`make c-library` passed, and strict freestanding syntax checks passed for
+`c/src/volume_device.c` on x86-64, AArch64, and RISC-V. No Rust sources were
+edited and Cargo was not used. Device discard remains. Logs:
+`temp/c-library-volume-device-build.log`,
+`temp/volume-device-contract-build.log`.
