@@ -250,5 +250,8 @@ $(BUILD_DIR)/volume-type-map-contracts: c/tests/volume_type_map_contracts.c $(BU
 $(BUILD_DIR)/volume-superblock-contracts: c/tests/volume_superblock_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
 
+$(BUILD_DIR)/volume-device-contracts: c/tests/volume_device_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
+
 $(BUILD_DIR)/volume-checkpoint-contracts: c/tests/volume_checkpoint_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
