@@ -45,3 +45,12 @@ int ghostos_fsd_snapshot_list(const ghostos_fsd_snapshot *snapshots, size_t capa
     return ghostos_fsd_list(1, snapshots[index].names, snapshots[index].name_lengths, snapshots[index].name_count, skip,
         output, output_capacity, written, next);
 }
+int ghostos_fsd_snapshot_release(ghostos_fsd_snapshot *snapshots, size_t capacity, uint64_t owner, uint64_t handle,
+    bool checkpoint_ready) {
+    size_t index = 0;
+    int status = snapshot_index(snapshots, capacity, owner, handle, &index);
+    if (status) return status;
+    if (!checkpoint_ready) return 6;
+    snapshots[index].occupied = false;
+    return 0;
+}

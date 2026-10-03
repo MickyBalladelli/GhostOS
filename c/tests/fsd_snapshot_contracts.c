@@ -20,6 +20,14 @@ static void snapshot_list_rejects_a_missing_path_length(void) {
     assert(!ghostos_fsd_snapshot_list(snapshots, 1, 1, handle, buffer, sizeof buffer, 1, 0, output, sizeof output, &written, &next));
     assert(written >= 22 && buffer[0] == '/' && !memcmp(output + 22, "data", 4));
     assert(ghostos_fsd_snapshot_list(snapshots, 1, 8, handle, buffer, sizeof buffer, 1, 0, output, sizeof output, &written, &next) == 1);
+    assert(ghostos_fsd_snapshot_release(snapshots, 1, 1, handle, false) == 6);
+    assert(snapshots[0].occupied);
+    assert(ghostos_fsd_snapshot_release(snapshots, 1, 8, handle, true) == 1);
+    assert(!ghostos_fsd_snapshot_release(snapshots, 1, 1, handle, true));
+    assert(!snapshots[0].occupied);
+    assert(ghostos_fsd_snapshot_list(snapshots, 1, 1, handle, buffer, sizeof buffer, 1, 0, output, sizeof output, &written, &next) == 1);
+    assert(!ghostos_fsd_snapshot_create(8, 1, snapshots, 1, names, lengths, 1, &handle));
+    assert((uint32_t)(handle >> 32) == 2);
 }
 int main(void) {
     snapshot_list_rejects_a_missing_path_length();
