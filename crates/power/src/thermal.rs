@@ -97,64 +97,37 @@ pub struct ThermalEvent {
 
 pub struct ThermalEventLog<const CAPACITY: usize> {
     events: [Option<ThermalEvent>; CAPACITY],
-    next: usize,
-    len: usize,
-    dropped: u64,
+    state: crate::native::Log,
 }
 
 impl<const CAPACITY: usize> ThermalEventLog<CAPACITY> {
     pub const fn new() -> Self {
         Self {
             events: [None; CAPACITY],
-            next: 0,
-            len: 0,
-            dropped: 0,
+            state: crate::native::Log::EMPTY,
         }
     }
 
     pub const fn len(&self) -> usize {
-        self.len
+        self.state.len
     }
 
     pub const fn dropped(&self) -> u64 {
-        self.dropped
+        self.state.dropped
     }
 
     fn push(&mut self, event: ThermalEvent) {
-        if CAPACITY == 0 {
-            self.dropped = self.dropped.saturating_add(1);
-            return
+        if let Some(slot) = self.state.push(CAPACITY) {
+            self.events[slot] = Some(event)
         }
-        if self.len == CAPACITY {
-            self.dropped = self.dropped.saturating_add(1)
-        } else {
-            self.len += 1
-        }
-        self.events[self.next] = Some(event);
-        self.next = if self.next + 1 == CAPACITY {
-            0
-        } else {
-            self.next + 1
-        };
     }
 
     pub fn drain(&mut self, destination: &mut [Option<ThermalEvent>]) -> usize {
-        let count = self.len.min(destination.len());
-        if CAPACITY == 0 {
-            return 0
-        }
-        let mut index = if self.len == CAPACITY {
-            self.next
-        } else if self.next >= self.len {
-            self.next - self.len
-        } else {
-            CAPACITY - (self.len - self.next)
-        };
+        let (mut index, count) = self.state.drain(CAPACITY, destination.len());
         for slot in destination.iter_mut().take(count) {
             *slot = self.events[index].take();
             index = if index + 1 == CAPACITY { 0 } else { index + 1 };
         }
-        self.len -= count;
         count
     }
 }
@@ -257,40 +230,17 @@ impl ThermalManager {
         self.last_reading = Some(reading);
         let temperature = reading.temperature_deci_kelvin;
         let previous_action = self.action;
-        let mut action = previous_action;
-        if self
-            .trips
-            .critical_deci_kelvin
-            .is_some_and(|critical| temperature >= critical)
-        {
-            action = ThermalAction::EmergencyShutdown
-        } else if self
-            .trips
-            .hot_deci_kelvin
-            .is_some_and(|hot| temperature >= hot)
-        {
-            action = ThermalAction::Throttle { percent: 75 }
-        } else if let Some(passive) = self.trips.passive_deci_kelvin {
-            if temperature >= passive {
-                let above = temperature - passive;
-                action = ThermalAction::Throttle {
-                    percent: 25_u8.saturating_add((above / 2).min(50) as u8),
-                }
-            } else if temperature.saturating_add(self.hysteresis_deci_kelvin) < passive {
-                action = ThermalAction::Normal
-            }
-        } else {
-            action = ThermalAction::Normal
-        }
+        let (action, event) = crate::native::decide(
+            self.trips, self.hysteresis_deci_kelvin, temperature, previous_action,
+        );
         self.action = action;
-        if action != previous_action {
-            let kind = match action {
-                ThermalAction::EmergencyShutdown => ThermalEventKind::Critical,
-                ThermalAction::Normal => ThermalEventKind::Recovered,
-                ThermalAction::Throttle { .. } if previous_action == ThermalAction::Normal => {
-                    ThermalEventKind::ThrottleStarted
-                }
-                ThermalAction::Throttle { .. } => ThermalEventKind::ThrottleChanged,
+        if event != 0 {
+            let kind = match event {
+                1 => ThermalEventKind::ThrottleStarted,
+                2 => ThermalEventKind::ThrottleChanged,
+                3 => ThermalEventKind::Recovered,
+                4 => ThermalEventKind::Critical,
+                _ => unreachable!("native thermal event"),
             };
             self.events.push(ThermalEvent {
                 kind,

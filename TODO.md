@@ -546,7 +546,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/platform-io/` — C owns active asynchronous queue metadata, round-robin cursors, generation-tagged token validation, submit/dispatch/complete/poll/cancel state transitions, pending counts, and I/O/media buffer/format/plane/access validation. Rust retains generic request/response payloads, public wrappers, NUMA logging, const helpers, and status conversion. All four existing queue model cases have C source; behavior parity, Rust build/adapters, and full removal remain.
 - [ ] `crates/policy/` — C owns active caller-owned principal/object/binding storage, insertion and replacement, snapshot fingerprints, and all five read-only change simulations. Authentication, package, network, storage, update, and VM consumers build with checked-layout Rust adapters. Stable affected-entry ordering/de-duplication and source error precedence are retained; all three existing fixtures have C source. Rust public types/const constructors/report conversion/debug views, build adapters, behavior parity, and full removal remain.
 - [ ] `crates/posix-compat/` — Active descriptor allocation, access checks, offsets, removal, and `/proc`, `/sys`, `/dev` path parsing now use C. Rust retains runtime file ownership, service calls, ABI dispatch, resolvers, and public types. Full cutover and behavior parity remain.
-- [ ] `crates/power/` — power management.
+- [ ] `crates/power/` — Active thermal action/event decisions and generic event queue bookkeeping now use C. Rust retains typed event storage, const trip validation/getters, sensors/actuators, ACPI, hot-plug orchestration, and placement/frequency policy. Full cutover and behavior parity remain.
 - [ ] `crates/protocol/` — Active transport guards now store checked-layout C state and call C for construction, class validation, version negotiation, message limits, replay protection, authentication lockout, backpressure reserve/release, and disconnect/retry scheduling. HTTP, SDK, fabric, mesh, web terminal, and VM consumers build. Rust keeps public const limits/version helpers/getters/reconnect reset and typed error adapters; behavior parity, Rust build removal, and full cutover remain.
 - [ ] `crates/ras/` — Active event history, sequence/cursor/drop state, saturating ECC/CXL/AER counters, and caller-owned poison quarantine/admission tables now use C. Generic capacities, newest-first iteration, node-scoped overlap checks, error ordering, zero-length directly constructed ranges, and debug overflow handling are preserved. C also owns budget prediction/threshold decisions, workload insertion/removal, eviction selection, and approved-eviction commits. C now also owns dirty-page tables, flush-state transitions, clean-slot cleanup, recovery reset/generation updates, and AER isolation decisions. Rust retains typed/const APIs, trace emission, controller/journal calls, last-reading/generation storage, marker conversion, and storage actions. The existing three RAS fixtures and a flush-state regression have C source. Behavior parity and full removal remain.
 - [ ] `crates/rms/` — record management and storage.
@@ -722,3 +722,19 @@ checks passed for all three targets. Logs are
 `temp/posix-x86-build.log`, `temp/posix-aarch64-build.log`, and
 `temp/posix-riscv-build.log`. No behavior-parity execution is claimed;
 remaining ABI dispatch, resolver, and runtime integration still use Rust.
+
+Power thermal progress on 2026-10-03: `c/src/thermal.c` now owns critical/hot/
+passive priority, throttling percentages, saturated hysteresis recovery, and
+change-event classification. C also owns generic event-ring cursors, counts,
+saturating dropped-event accounting, and partial-drain selection. Rust keeps
+typed event values, last readings, const validation/getters, and sensor and
+actuator calls. Zero capacity and FIFO overwrite/drain order are preserved.
+Manager updates still precede actuator calls, including actuator failures.
+
+The C archive and host/x86/AArch64/RISC-V power library builds passed, along
+with strict freestanding target syntax checks. RISC-V used the temporary
+Clang/LLVM wrapper. Logs: `temp/c-library-thermal-build.log`,
+`temp/power-native-build.log`, `temp/power-x86-build.log`,
+`temp/power-aarch64-build.log`, `temp/power-riscv-build.log`.
+ACPI, hot-plug orchestration, placement/frequency policy, full Rust removal,
+and executed behavior parity remain open.
