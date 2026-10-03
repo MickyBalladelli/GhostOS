@@ -1773,7 +1773,8 @@ C storage-tree progress on 2026-10-03:
 - [x] Add `c/src/volume_tree.c` and `volume_tree.h` for native leaf/branch payload codecs, key ordering, first-free copy-on-write allocation, leaf/branch splits, root promotion, and child-order replacement. Preserve all seven serialized slots, eight branch children, named-prefix UTF-8 validation, full name bytes, and reserved/trailing payload acceptance.
 - [x] Use caller-owned traversal frames and payload scratch without recursion or heap allocation. Old tree nodes remain untouched, and the output root changes only on success. Failed mutations can leave unreachable allocations, matching the allocator side-effect policy.
 - [x] Connect tree mutation to the C daemon empty-write callback, record/version/quota publication, garbage collection with one arena-full retry, and checkpoint root capture.
-- [ ] Connect persistent bank flush, loaded-tree cache construction, checkpoint readers, and the active service. Full migration and behavior parity remain incomplete.
+- [x] Add loaded-tree cache construction and pinned-root reader materialization in `c/src/volume_tree_reader.c`.
+- [ ] Connect persistent bank flush/load and the active service. Full migration and behavior parity remain incomplete.
 
 `make -j4 c-library` passed. Strict freestanding compilation of the tree
 module passed on x86-64, AArch64, and RISC-V. The tree, block, and record modules
@@ -1786,9 +1787,21 @@ C empty-write storage progress on 2026-10-03:
 - [x] Add `volume_mutation.c` for C create/truncate storage publication, parent and symlink resolution, quotas, retained versions, object allocation, and reader rebuild after success.
 - [x] Add `fsd_storage.c` to adapt empty writes and storage-full status to C daemon callbacks; share the writer pin table through a checkpoint backend capturing generation and tree root.
 - [x] Add `volume_collect.c` to trace active/pinned trees and live data chains, reclaim unreachable blocks, and preserve pinned roots during allocation retry. Reject corrupt reachable payloads before sweeping.
-- [ ] Wire durable bank flush/load, checkpoint read materialization, request dispatch/tracing, and active service cutover. Full migration remains incomplete.
+- [ ] Wire durable bank flush/load, request dispatch/tracing, and active service cutover. Full migration remains incomplete.
 
 C library build and strict freestanding compilation passed for x86-64,
 AArch64, and RISC-V. No tests were run, no Rust files were changed, and Cargo
 was not used. Build log is ready for cleanup:
 `temp/c-library-volume-mutation-build.log`.
+
+C raw-tree reader progress on 2026-10-03:
+
+- [x] Materialize active and checkpoint root records into caller-owned C reader caches, retaining leaf order, deleted entries, and historical versions.
+- [x] Bound traversal with caller-owned pending/visited arrays; reject cycles, repeated child ownership, invalid IDs, checksum failures, and mismatched node kinds without publishing reader/count outputs.
+- [x] Expose pinned-root readers through existing C whole-file, ranged, and exact-version reads. Require distinct reader buffers and retain the pin through reader lifetime.
+- [ ] Wire bank loading and daemon consumers to materialization; durable flush and full service cutover remain incomplete.
+
+C library build and strict freestanding compilation passed for x86-64,
+AArch64, and RISC-V. No tests were run, no `.rs` files were changed, and Cargo
+was not used. Temporary build log is ready for cleanup:
+`temp/c-library-volume-tree-reader-build.log`.

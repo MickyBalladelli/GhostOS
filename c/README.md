@@ -686,5 +686,25 @@ blocks. Corrupt reachable payloads stop collection before sweeping. Supply the
 same pin table to the writer and resource manager, using
 `ghostos_fsd_storage_checkpoints` to capture both generation and root. A
 checkpoint backend that only captures generations cannot retain raw old roots.
-Checkpoint reader materialization, durable bank flush, load integration, and
-active service dispatch remain unfinished. These writes publish in memory.
+Durable bank flush and active service dispatch remain unfinished. These writes
+publish in memory.
+
+
+`volume_tree_reader.h` materializes records directly from a raw active or pinned
+tree root, then builds the existing C block reader. It visits branch children
+in order and keeps every leaf record, including deleted and retained versions.
+Use `ghostos_volume_tree_reader_init` after loading raw blocks and their type
+map; its returned record count supplies the mutation backend cache count.
+Use `ghostos_volume_tree_checkpoint_reader` with the shared root-capturing pin
+table to read a checkpoint through the ordinary whole/ranged/version APIs.
+Generation-only pins do not identify nonempty raw checkpoint roots.
+
+Supply separate record/file/block-view arrays for each reader plus one visited
+bit and pending ID per arena block. This bounds traversal without recursion,
+rejects repeated tree children/cycles, invalid IDs, kind mismatches, and corrupt
+node checksums. Data checks remain lazy through the existing read APIs. Reader
+and count outputs stay unchanged on failure, but cache/scratch arrays can be
+partially overwritten; never reuse buffers backing an existing reader.
+Keep the checkpoint pinned until its reader is discarded, and serialize
+materialization with mutations. Disk bank loading and daemon dispatch still
+need to call this layer.
