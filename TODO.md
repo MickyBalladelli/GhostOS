@@ -621,5 +621,7 @@ verification wrapper. Logs are in `temp/c-library-hot-allocator-build.log`,
 `temp/vm-hot-allocator-build.log`, `temp/kernel-hot-allocator-*-build.log`,
 `temp/c-library-driver-resources-build.log`, `temp/vm-driver-resources-build.log`,
 and `temp/kernel-driver-resources-*-build.log`. C syntax checks also passed
-for all three targets. Litmus build verification is being completed. No new
-behavior-parity execution is claimed.
+for all three targets. Litmus C/VM and x86/AArch64/RISC-V library builds also
+passed; logs are `temp/c-library-litmus-build.log`, `temp/vm-litmus-build.log`,
+and `temp/kernel-litmus-*-build.log`. RISC-V again used the verification
+wrapper. No new behavior-parity execution is claimed.
