@@ -289,5 +289,8 @@ $(BUILD_DIR)/volume-remove-contracts: c/tests/volume_remove_contracts.c $(BUILD_
 $(BUILD_DIR)/volume-delete-contracts: c/tests/volume_delete_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
 
+$(BUILD_DIR)/volume-current-link-contracts: c/tests/volume_current_link_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
+
 $(BUILD_DIR)/volume-checkpoint-contracts: c/tests/volume_checkpoint_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
