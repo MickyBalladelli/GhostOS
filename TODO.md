@@ -923,3 +923,20 @@ Logs: `temp/c-library-rms-build.log`, `temp/rms-test.log`,
 `temp/rms-contract-build.log`, `temp/rms-x86-build.log`,
 `temp/rms-aarch64-build.log`, and `temp/rms-riscv64-build.log`. Full Rust
 removal and broader behavior parity remain open.
+
+Agent-bridge progress on 2026-10-03: `c/src/agent.c` now owns task-scope
+validation, parent identity and epoch checks, right and transport coverage,
+lifetime limits, checked expiry, reusable grant slots, nonce and revocation
+wrap, consume authorization, run-right unions, active-grant counts, and
+commit/discard decisions. Parent right and transport reads still happen only
+after the earlier comparisons succeed, and parent expiry is still read only
+after the lifetime addition succeeds. A failed consume still leaves the grant
+in place. Rust retains signature and lease verification, script execution, and
+GhostFS sandbox calls. Both existing attenuation tests passed, as did
+`build/c/agent-contracts`. `make c-library` and host/x86/AArch64/RISC-V agent
+library builds passed. RISC-V used the temporary Clang/LLVM wrapper. Strict
+freestanding syntax checks passed for `c/src/agent.c` on all three targets.
+Logs: `temp/c-library-agent-build.log`, `temp/agent-test.log`,
+`temp/agent-contract-build.log`, `temp/agent-x86-build.log`,
+`temp/agent-aarch64-build.log`, and `temp/agent-riscv64-build.log`. Full Rust
+removal and broader behavior parity remain open.
