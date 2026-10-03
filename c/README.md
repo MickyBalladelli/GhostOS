@@ -68,7 +68,7 @@ use only the freestanding foundation objects.
 | `kernel/src/console.rs` | `src/console.c` | `include/ghostos/console.h` |
 | `kernel/src/crash.rs` (capsule encoding, build identity, one-time guard) | `src/crash.c` | `include/ghostos/crash.h` |
 | `kernel/src/dlm.rs` (node/federation fences, range lock manager) | `src/dlm.c` | `include/ghostos/dlm.h` |
-| `kernel/src/dma.rs` (capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c` | `include/ghostos/dma.h` |
+| `kernel/src/dma.rs` (active caller-owned mapping tables, staged allocation, capability-checked DMA mapping and IOMMU callbacks) | `src/dma.c`, `src/dma_state.c` | `include/ghostos/dma.h` |
 | `kernel/src/driver_capabilities.rs` | `src/driver_capabilities.c` | `include/ghostos/driver_capabilities.h` |
 | `kernel/src/hot_allocator.rs` | `src/hot_allocator.c` | `include/ghostos/hot_allocator.h` |
 | `kernel/src/invariants.rs` (active address-space/page-table checks and failure formatting; const APIs/panic policy stay in Rust) | `src/invariants.c` | `include/ghostos/invariants.h` |
@@ -455,3 +455,10 @@ capacity, including zero. Hardware policy, overlap checks, borrowed cleanup,
 and lookup run in C. The adapter retains public const operations and converts
 ordered overflow reports into Rust debug panics. Standalone bounded silo APIs
 remain available with their existing validation rules.
+
+Active kernel DMA callers use `dma_state.c` with caller-owned record arrays.
+Preparation validates and selects a mapping without mutation; the adapter
+commits after Rust capability checks and IOMMU approval. IOMMU calls remain
+outside the C stack, preserving host unwind behavior. Generic capacities are
+not capped by the standalone C manager's 256 slots. CPU partition queries and
+transitions also use C in host builds, including VM consumers.

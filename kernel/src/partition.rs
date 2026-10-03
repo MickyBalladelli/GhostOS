@@ -28,88 +28,65 @@ impl CorePartition {
     }
 
     pub fn online(self) -> CpuMask {
-        {
-            let mut words = [0; 2];
-            unsafe { ghostos_core_partition_get_online(&self, words.as_mut_ptr()) };
-            return CpuMask::from_words(words[0], words[1])
-        }
-
+        let mut words = [0; 2];
+        unsafe { ghostos_core_partition_get_online(&self, words.as_mut_ptr()) };
+        CpuMask::from_words(words[0], words[1])
     }
 
     pub fn isolated(self) -> CpuMask {
-        {
-            let mut words = [0; 2];
-            unsafe { ghostos_core_partition_get_isolated(&self, words.as_mut_ptr()) };
-            return CpuMask::from_words(words[0], words[1])
-        }
-
+        let mut words = [0; 2];
+        unsafe { ghostos_core_partition_get_isolated(&self, words.as_mut_ptr()) };
+        CpuMask::from_words(words[0], words[1])
     }
 
     pub fn housekeeping(self) -> CpuMask {
-        {
-            let mut words = [0; 2];
-            unsafe { ghostos_core_partition_get_housekeeping(&self, words.as_mut_ptr()) };
-            return CpuMask::from_words(words[0], words[1])
-        }
-
+        let mut words = [0; 2];
+        unsafe { ghostos_core_partition_get_housekeeping(&self, words.as_mut_ptr()) };
+        CpuMask::from_words(words[0], words[1])
     }
 
     pub fn is_online(self, cpu: CpuId) -> bool {
-        { return unsafe { ghostos_core_partition_is_online(&self, cpu.raw()) } }
-
+        unsafe { ghostos_core_partition_is_online(&self, cpu.raw()) }
     }
 
     pub fn is_isolated(self, cpu: CpuId) -> bool {
-        { return unsafe { ghostos_core_partition_is_isolated(&self, cpu.raw()) } }
-
+        unsafe { ghostos_core_partition_is_isolated(&self, cpu.raw()) }
     }
 
     pub fn accepts_kernel_work(self, cpu: CpuId) -> bool {
-        { return unsafe { ghostos_core_partition_accepts_kernel_work(&self, cpu.raw()) } }
-
+        unsafe { ghostos_core_partition_accepts_kernel_work(&self, cpu.raw()) }
     }
 
     pub fn accepts_timer(self, cpu: CpuId) -> bool {
-        { return unsafe { ghostos_core_partition_accepts_timer(&self, cpu.raw()) } }
-
+        unsafe { ghostos_core_partition_accepts_timer(&self, cpu.raw()) }
     }
 
     pub fn accepts_ipc(self, cpu: CpuId) -> bool {
-        { return unsafe { ghostos_core_partition_accepts_ipc(&self, cpu.raw()) } }
-
+        unsafe { ghostos_core_partition_accepts_ipc(&self, cpu.raw()) }
     }
 
     pub fn set_online(&mut self, online: CpuMask) -> Result<(), CorePartitionError> {
-        {
-            let words = online.raw_words();
-            return match unsafe { ghostos_core_partition_set_online(self, words.as_ptr()) } {
-                0 => Ok(()),
-                1 => Err(CorePartitionError::EmptyMask),
-                _ => Err(CorePartitionError::OfflineCore),
-            }
+        let words = online.raw_words();
+        match unsafe { ghostos_core_partition_set_online(self, words.as_ptr()) } {
+            0 => Ok(()),
+            1 => Err(CorePartitionError::EmptyMask),
+            _ => Err(CorePartitionError::OfflineCore),
         }
-
     }
 
     pub fn isolate(&mut self, cpus: CpuMask) -> Result<(), CorePartitionError> {
-        {
-            let words = cpus.raw_words();
-            return match unsafe { ghostos_core_partition_isolate(self, words.as_ptr()) } {
-                0 => Ok(()),
-                1 => Err(CorePartitionError::EmptyMask),
-                2 => Err(CorePartitionError::OfflineCore),
-                _ => Err(CorePartitionError::NoHousekeepingCore),
-            }
+        let words = cpus.raw_words();
+        match unsafe { ghostos_core_partition_isolate(self, words.as_ptr()) } {
+            0 => Ok(()),
+            1 => Err(CorePartitionError::EmptyMask),
+            2 => Err(CorePartitionError::OfflineCore),
+            _ => Err(CorePartitionError::NoHousekeepingCore),
         }
-
     }
 
     pub fn release(&mut self, cpus: CpuMask) {
-        {
-            let words = cpus.raw_words();
-            unsafe { ghostos_core_partition_release(self, words.as_ptr()) };
-        }
-
+        let words = cpus.raw_words();
+        unsafe { ghostos_core_partition_release(self, words.as_ptr()) };
     }
 }
 

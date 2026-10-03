@@ -401,7 +401,7 @@ Port each Rust source module to C and preserve its behavior.
 - [x] `kernel/src/cow.rs` — C reference tracker, sharing and release, allocator-backed write faults, and page-copy callback.
 - [x] `kernel/src/crash.rs` — kernel builds and links the C capsule encoder and one-time crash guard; the kernel supplies register, capability, scheduler, audit, and persistence data.
 - [ ] `kernel/src/dlm.rs` — C fence tables, capability checked range locks, lease epochs, FIFO promotion, and contention reports are implemented and built. Shell diagnostics read the C singleton, but kernel lock operations still use the Rust manager; complete consumer cutover and behavior parity remain.
-- [ ] `kernel/src/dma.rs` — C port adds capability checked buffer/device authorization, bounded IOVA allocation, IOMMU map/unmap callbacks, and fixed-capacity records. Rust kernel callers remain active; behavior parity and consumer cutover remain.
+- [ ] `kernel/src/dma.rs` — Active callers use C-owned mapping records, request/buffer validation, IOVA allocation, ID generation, exact owner/authority checks, lookup, and staged map/unmap commits. Caller-owned arrays preserve zero and arbitrary generic capacities. Rust retains capability-space checks, typed public/const APIs, and IOMMU trait calls outside C, preserving host unwinding and commit-after-approval ordering. Behavior parity and full Rust removal remain.
 - [ ] `kernel/src/driver_capabilities.rs` — C port builds driver resource manifests, creates DMA/MMIO capabilities, and assigns validated MMIO mappings from the PCI inventory. Rust kernel callers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/hot_allocator.rs` — C port implements bounded per-CPU/per-node object pools, local and remote fallback, reclaim validation, placement/probe counters, and fragmentation reports. Rust kernel callers remain active; behavior parity and consumer cutover remain.
 - [ ] `kernel/src/invariants.rs` — Active address-space checks, page-table-transition checks, and redacted failure formatting now call C in host and target kernels. Host native-library metadata includes the C module for VM consumers. Rust keeps the public const catalogue/IDs/failure constructors, const interrupt check, and debug panic policy to preserve const APIs and host unwinding. x86 image, AArch64 library, and RISC-V library builds pass; behavior parity and full cutover remain.
@@ -416,7 +416,7 @@ Port each Rust source module to C and preserve its behavior.
 - [ ] `kernel/src/mouse.rs` — the Rust file is an ABI wrapper; C owns PS/2 packet collection, complete-packet publication, decoding, and sequence tracking. The C reader now sees the prior complete packet while a new packet is incomplete. Non-x86 keeps `mouse_stub.rs`; target build and behavior parity remain to verify.
 - [x] `kernel/src/mouse_stub.rs` — the Rust API wrapper calls the C non-x86 stub, which always returns an empty mouse state. The `MouseState` size/alignment match is compile-time checked; the AArch64 kernel target builds.
 - [ ] `kernel/src/page_fault.rs` — C now owns x86 fault decoding, one-time handler install and dispatch, quota consume/refund ordering, stack-map-before-commit ordering, and COW write sequencing. Rust adapters retain the native capability, allocator, and address-space objects; moving those objects and full cutover remain.
-- [ ] `kernel/src/partition.rs` — active kernel methods call C for CPU mask queries, housekeeping policy, and online/isolate/release transitions. Host builds retain Rust-only fallback; scheduler still owns the partition state, so full state cutover remains.
+- [ ] `kernel/src/partition.rs` — Host and target kernel methods call C for CPU mask queries, housekeeping policy, and online/isolate/release transitions. Rust-only host fallback is removed; shared mask layout has compile-time checks. Rust retains the const constructor and typed scheduler-owned wrapper; full cutover and behavior parity remain.
 - [ ] `kernel/src/pci.rs` — C owns the x86 CF8/CFC scan and bounded 64-device inventory. Rust adapts entries to the existing boot-facing iterator and logging; driver and storage consumers still use that adapter.
 - [ ] `kernel/src/persistence.rs` — C performs bounded x86 persistence-port load/save/flush. Rust retains record-container encoding and boot/crash record policy through the C storage adapter.
 - [x] `kernel/src/persona.rs` — C owns fixed-capacity active/disabled rights state operations. Rust keeps typed identity/right wrappers and the iterator used by scheduler and authentication callers.
@@ -587,3 +587,20 @@ library build passed. Build logs are in `temp/c-library-micro-silo.log` and
 `temp/kernel-micro-silo-build.log`. The x86 freestanding kernel library also
 built (`temp/kernel-micro-silo-x86-build.log`). Behavior parity and complete migration
 remain open.
+
+DMA/partition consumer progress on 2026-10-03: the DMA adapter now uses
+`c/src/dma_state.c` for caller-owned mapping tables and staged updates.
+Capability checks and IOMMU trait calls stay outside C, so rejected or panicking
+backends leave allocation state unchanged. Error ordering, physical-range
+constructor failures, first-free placement, wrapping IDs, and unmap authority
+matching follow the prior Rust implementation. Host CPU partition operations
+now use the same C implementation as target kernels. Host kernel, VM, and x86
+kernel library builds passed; C DMA syntax passed for x86, AArch64, and RISC-V.
+AArch64 and RISC-V kernel libraries also built; RISC-V used the existing
+temporary Clang/LLVM verification wrapper. Their logs are
+`temp/kernel-dma-partition-aarch64-build.log` and
+`temp/kernel-dma-partition-riscv64-build.log`.
+No behavior-parity execution is claimed; full migration remains open.
+Logs are in `temp/c-library-dma-partition-build.log`,
+`temp/kernel-dma-state-build.log`, `temp/vm-dma-partition-build.log`, and
+`temp/kernel-dma-partition-x86-build.log`.
