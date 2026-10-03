@@ -287,18 +287,10 @@ impl ClusterState {
     };
 
     fn frequency(self) -> FrequencyDecision {
-        let range = self
-            .config
-            .max_frequency_khz
-            .saturating_sub(self.config.min_frequency_khz);
-        let requested = self.config.min_frequency_khz
-            .saturating_add(range.saturating_mul(self.load_percent as u32) / 100);
-        let allowed_range = range.saturating_mul(100_u32.saturating_sub(self.throttle_percent as u32)) / 100;
         FrequencyDecision {
             cluster_id: self.config.id,
-            frequency_khz: self.config.min_frequency_khz.saturating_add(requested
-                .saturating_sub(self.config.min_frequency_khz)
-                .min(allowed_range)),
+            frequency_khz: crate::native::frequency(self.config.min_frequency_khz,
+                self.config.max_frequency_khz, self.load_percent, self.throttle_percent),
             throttle_percent: self.throttle_percent,
         }
     }
@@ -504,34 +496,15 @@ impl PowerPolicy {
     }
 
     pub fn place(&mut self, request: WorkloadRequest) -> Result<PlacementDecision, PowerPolicyError> {
-        let mut selected = None;
-        for (index, cluster) in self.clusters.iter().enumerate() {
-            if !cluster.valid
-                || cluster.throttle_percent == 100
-                || !cluster.config.cpus.intersects(request.affinity)
-                || request.preferred_cluster.is_some_and(|id| id != cluster.config.id)
-            {
-                continue
-            }
-            let latency_penalty = if request.class == WorkloadClass::LatencyCritical {
-                cluster.throttle_percent as u32 * 10
-            } else {
-                0
-            };
-            let score = cluster.load_percent as u32 * 100
-                + cluster.config.idle_power_mw
-                + latency_penalty;
-            if selected.is_none_or(|(_, best_score)| score < best_score) {
-                selected = Some((index, score))
-            }
-        }
-        if selected.is_none() && request.preferred_cluster.is_some() {
-            return self.place(WorkloadRequest {
-                preferred_cluster: None,
-                ..request
-            })
-        }
-        let (index, _) = selected.ok_or(PowerPolicyError::NoCluster)?;
+        let candidates = self.clusters.map(|cluster| crate::native::Candidate {
+            cpus: cluster.config.cpus.raw_words(),
+            idle_power_mw: cluster.config.idle_power_mw,
+            id: cluster.config.id,
+            load: cluster.load_percent,
+            throttle: cluster.throttle_percent,
+            valid: cluster.valid,
+        });
+        let index = crate::native::place(&candidates, request)?;
         let cluster = self.clusters[index];
         let cpus = cluster.config.cpus.intersection(request.affinity);
         let cpu = cpus.first().ok_or(PowerPolicyError::NoCpu)?;
@@ -550,12 +523,7 @@ impl PowerPolicy {
     }
 
     pub fn idle_state(&self, request: IdleRequest) -> CpuIdleState {
-        let available_us = request.next_wake_us.saturating_sub(request.now_us);
-        let limit_us = available_us.min(request.latency_budget_us);
-        [CpuIdleState::C3, CpuIdleState::C2, CpuIdleState::C1]
-            .into_iter()
-            .find(|state| state.exit_latency_us() <= limit_us)
-            .unwrap_or(CpuIdleState::C0)
+        crate::native::idle(request.now_us, request.next_wake_us, request.latency_budget_us)
     }
 
     pub fn request_idle(&mut self, cpu: u16, request: IdleRequest) -> CpuIdleState {
@@ -654,14 +622,8 @@ impl PowerPolicy {
         now_us: u64,
     ) -> Result<DevicePowerState, PowerPolicyError> {
         let device = self.device_mut(device_id)?;
-        let idle_for = now_us.saturating_sub(device.last_active_us);
-        device.state = if idle_for >= device.config.suspend_after_us {
-            DevicePowerState::Suspended
-        } else if idle_for >= device.config.idle_after_us {
-            DevicePowerState::RuntimeIdle
-        } else {
-            DevicePowerState::Active
-        };
+        device.state = crate::native::device(now_us, device.last_active_us,
+            device.config.idle_after_us, device.config.suspend_after_us);
         Ok(device.state)
     }
 

@@ -50,3 +50,53 @@ unsafe extern "C" {
     fn ghostos_thermal_drain(log: *mut Log, capacity: usize,
         destination_length: usize, first: *mut usize) -> usize;
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct Candidate {
+    pub cpus: [u64; 2], pub idle_power_mw: u32,
+    pub id: u8, pub load: u8, pub throttle: u8, pub valid: bool,
+}
+pub(crate) fn frequency(minimum: u32, maximum: u32, load: u8, throttle: u8) -> u32 {
+    unsafe { ghostos_power_frequency(minimum, maximum, load, throttle) }
+}
+pub(crate) fn idle(now: u64, wake: u64, budget: u64) -> crate::CpuIdleState {
+    match unsafe { ghostos_power_idle(now, wake, budget) } {
+        0 => crate::CpuIdleState::C0,
+        1 => crate::CpuIdleState::C1,
+        2 => crate::CpuIdleState::C2,
+        3 => crate::CpuIdleState::C3,
+        _ => unreachable!("native idle state"),
+    }
+}
+pub(crate) fn device(now: u64, active: u64, idle: u64, suspend: u64) -> crate::DevicePowerState {
+    match unsafe { ghostos_power_device(now, active, idle, suspend) } {
+        0 => crate::DevicePowerState::Active,
+        1 => crate::DevicePowerState::RuntimeIdle,
+        2 => crate::DevicePowerState::Suspended,
+        _ => unreachable!("native device state"),
+    }
+}
+pub(crate) fn place(clusters: &[Candidate], request: crate::WorkloadRequest) -> Result<usize, crate::PowerPolicyError> {
+    let affinity = request.affinity.raw_words();
+    let mut selected = 0;
+    match unsafe { ghostos_power_place(clusters.as_ptr(), clusters.len(), affinity.as_ptr(),
+        request.class as u8, request.preferred_cluster.is_some(), request.preferred_cluster.unwrap_or(0),
+        cfg!(debug_assertions), &mut selected) } {
+        0 => Ok(selected),
+        1 => Err(crate::PowerPolicyError::NoCluster),
+        2 => panic!("attempt to add with overflow"),
+        _ => unreachable!("native power placement"),
+    }
+}
+const _: () = {
+    assert!(core::mem::size_of::<Candidate>() == 24);
+    assert!(core::mem::offset_of!(Candidate, valid) == 23);
+};
+unsafe extern "C" {
+    fn ghostos_power_frequency(minimum: u32, maximum: u32, load: u8, throttle: u8) -> u32;
+    fn ghostos_power_idle(now: u64, wake: u64, budget: u64) -> u8;
+    fn ghostos_power_device(now: u64, active: u64, idle: u64, suspend: u64) -> u8;
+    fn ghostos_power_place(clusters: *const Candidate, count: usize, affinity: *const u64,
+        class_id: u8, preferred: bool, preferred_id: u8, checked: bool, selected: *mut usize) -> i32;
+}
