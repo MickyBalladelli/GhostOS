@@ -130,3 +130,168 @@ int ghostos_config_parse_system(const uint8_t *source, size_t length, uint16_t *
     *revision = revision_value;
     return 0;
 }
+static int quoted_name(const uint8_t *bytes, size_t length, const uint8_t **text, size_t *text_length) {
+    size_t i;
+    if (length < 2) return 11;
+    if (bytes[0] == '"' && bytes[length - 1] == '"') {
+        for (i = 1; i + 1 < length; ++i) if (bytes[i] == '\\') return 11;
+    } else if (!(bytes[0] == '\'' && bytes[length - 1] == '\'')) return 11;
+    *text = bytes + 1;
+    *text_length = length - 2;
+    if (!*text_length || *text_length > GHOSTOS_CONFIG_SERVICE_NAME) return 11;
+    for (i = 0; i < *text_length; ++i) if (!(*text)[i]) return 11;
+    return 0;
+}
+static int unquoted_word(const uint8_t *bytes, size_t length, const uint8_t **text, size_t *text_length) {
+    if (length >= 2 && ((bytes[0] == '"' && bytes[length - 1] == '"') || (bytes[0] == '\'' && bytes[length - 1] == '\''))) {
+        *text = bytes + 1;
+        *text_length = length - 2;
+    } else {
+        *text = bytes;
+        *text_length = length;
+    }
+    return 0;
+}
+static int finish_service(ghostos_config_service *services, size_t capacity, size_t *count, bool *active,
+    bool has_name, bool has_image, bool has_kind, bool has_enabled, bool has_restart, const uint8_t *name,
+    size_t name_length, uint64_t image, uint8_t kind, uint8_t restart, bool enabled) {
+    size_t i, j;
+    if (!*active) return 0;
+    if (!has_name || !has_image || !has_kind) return 7;
+    if (!image) return 2;
+    for (i = 0; i < *count; ++i) {
+        if (services[i].name_length != name_length) continue;
+        for (j = 0; j < name_length && services[i].name[j] == name[j]; ++j) {}
+        if (j == name_length) return 10;
+    }
+    if (*count == capacity) return 12;
+    for (i = 0; i < name_length; ++i) services[*count].name[i] = name[i];
+    services[*count].name_length = (uint8_t)name_length;
+    services[*count].image = image;
+    services[*count].kind = kind;
+    services[*count].enabled = has_enabled ? enabled : true;
+    services[*count].restart = has_restart ? restart : 0;
+    *count += 1;
+    *active = false;
+    return 0;
+}
+int ghostos_config_parse_services(const uint8_t *source, size_t length, uint16_t *schema, uint64_t *revision,
+    ghostos_config_service *services, size_t capacity, size_t *count) {
+    bool has_schema = false, has_revision = false, in_service = false, active = false;
+    bool has_name = false, has_image = false, has_kind = false, has_enabled = false, has_restart = false, enabled = true;
+    uint64_t schema_value = 0, revision_value = 0, image = 0;
+    uint8_t name[GHOSTOS_CONFIG_SERVICE_NAME], kind = 0, restart = 0;
+    size_t name_length = 0, cursor = 0;
+    *count = 0;
+    while (cursor < length) {
+        const uint8_t *line = source + cursor;
+        size_t line_length = 0, equals, key_length, value_length;
+        const uint8_t *key, *value, *word;
+        size_t word_length = 0;
+        while (cursor + line_length < length && source[cursor + line_length] != '\n') ++line_length;
+        cursor += line_length + (cursor + line_length < length ? 1 : 0);
+        strip_comment(&line, &line_length);
+        trim(&line, &line_length);
+        if (!line_length) continue;
+        if (line[0] == '[') {
+            const uint8_t *section;
+            size_t section_length = 0;
+            bool array = false;
+            int status = finish_service(services, capacity, count, &active, has_name, has_image, has_kind, has_enabled, has_restart, name, name_length, image, kind, restart, enabled);
+            if (status) return status;
+            if (section_name(line, line_length, &section, &section_length, &array)) return 1;
+            if (!array && text_is(section, section_length, "system")) { in_service = false; continue; }
+            if (array && (text_is(section, section_length, "service") || text_is(section, section_length, "services"))) {
+                in_service = true;
+                active = true;
+                has_name = has_image = has_kind = has_enabled = has_restart = false;
+                enabled = true;
+                restart = 0;
+                image = 0;
+                name_length = 0;
+                continue;
+            }
+            return known_section(section, section_length, array, &array) == 1 ? 1 : 9;
+        }
+        for (equals = 0; equals < line_length && line[equals] != '='; ++equals) {}
+        if (equals == line_length) return 2;
+        key = line;
+        key_length = equals;
+        trim(&key, &key_length);
+        if (!key_length) return 2;
+        value = line + equals + 1;
+        value_length = line_length - equals - 1;
+        trim(&value, &value_length);
+        if (!in_service) {
+            uint64_t parsed = 0;
+            int status;
+            if (!text_is(key, key_length, "schema") && !text_is(key, key_length, "revision")) return 3;
+            status = parse_u64(value, value_length, &parsed);
+            if (status) return status;
+            if (text_is(key, key_length, "schema")) {
+                if (parsed > UINT16_MAX) return 5;
+                if (has_schema) return 4;
+                has_schema = true;
+                schema_value = parsed;
+            } else {
+                if (has_revision) return 4;
+                has_revision = true;
+                revision_value = parsed;
+            }
+            continue;
+        }
+        if (text_is(key, key_length, "name")) {
+            const uint8_t *text;
+            size_t text_length = 0;
+            int status = quoted_name(value, value_length, &text, &text_length);
+            size_t i;
+            if (status) return status;
+            if (has_name) return 4;
+            for (i = 0; i < text_length; ++i) name[i] = text[i];
+            name_length = text_length;
+            has_name = true;
+        } else if (text_is(key, key_length, "image")) {
+            int status = parse_u64(value, value_length, &image);
+            if (status) return status;
+            if (has_image) return 4;
+            has_image = true;
+        } else if (text_is(key, key_length, "kind") || text_is(key, key_length, "restart")) {
+            bool kind_key = text_is(key, key_length, "kind");
+            uint8_t parsed;
+            unquoted_word(value, value_length, &word, &word_length);
+            if (kind_key && text_is(word, word_length, "system")) parsed = 0;
+            else if (kind_key && text_is(word, word_length, "network")) parsed = 1;
+            else if (kind_key && text_is(word, word_length, "storage")) parsed = 2;
+            else if (kind_key && text_is(word, word_length, "compute")) parsed = 3;
+            else if (!kind_key && text_is(word, word_length, "never")) parsed = 0;
+            else if (!kind_key && text_is(word, word_length, "on-failure")) parsed = 1;
+            else if (!kind_key && text_is(word, word_length, "always")) parsed = 2;
+            else return 2;
+            if (kind_key) {
+                if (has_kind) return 4;
+                kind = parsed;
+                has_kind = true;
+            } else {
+                if (has_restart) return 4;
+                restart = parsed;
+                has_restart = true;
+            }
+        } else if (text_is(key, key_length, "enabled")) {
+            if (text_is(value, value_length, "true")) enabled = true;
+            else if (text_is(value, value_length, "false")) enabled = false;
+            else return 8;
+            if (has_enabled) return 4;
+            has_enabled = true;
+        } else return 3;
+    }
+    {
+        int status = finish_service(services, capacity, count, &active, has_name, has_image, has_kind, has_enabled, has_restart, name, name_length, image, kind, restart, enabled);
+        if (status) return status;
+    }
+    if (!has_schema || !has_revision) return 7;
+    if (schema_value != 1) return 6;
+    if (!revision_value) return 2;
+    *schema = (uint16_t)schema_value;
+    *revision = revision_value;
+    return 0;
+}

@@ -27,7 +27,7 @@ $(BUILD_DIR)/libghostos.a: $(OBJECTS)
 	$(AR) rcs $@ $(OBJECTS)
 
 # Explicit opt-in target builds tests but does not execute them.
-c-test-binaries: $(BUILD_DIR)/config-parser-contracts $(BUILD_DIR)/reconfigure-contracts $(BUILD_DIR)/config-signature-contracts $(BUILD_DIR)/backup-crypto-contracts $(BUILD_DIR)/backup-contracts $(BUILD_DIR)/attestation-contracts $(BUILD_DIR)/confidential-fabric-contracts $(BUILD_DIR)/confidential-capability-contracts $(BUILD_DIR)/enclave-contracts $(BUILD_DIR)/remote-debug-contracts $(BUILD_DIR)/coredump-contracts $(BUILD_DIR)/gdb-contracts $(BUILD_DIR)/probe-contracts $(BUILD_DIR)/embedded-script-contracts $(BUILD_DIR)/wasm-script-contracts $(BUILD_DIR)/logd-contracts $(BUILD_DIR)/audit-contracts $(BUILD_DIR)/agent-contracts $(BUILD_DIR)/rms-contracts $(BUILD_DIR)/heal-contracts $(BUILD_DIR)/actor-contracts $(BUILD_DIR)/ras-contracts $(BUILD_DIR)/policy-contracts $(BUILD_DIR)/platform-io-contracts $(BUILD_DIR)/numa-contracts $(BUILD_DIR)/time-sync-contracts $(BUILD_DIR)/admission-contracts $(BUILD_DIR)/path-pattern-contracts $(BUILD_DIR)/foundation-tests $(BUILD_DIR)/kernel-contracts $(BUILD_DIR)/kernel-frame-contracts $(BUILD_DIR)/kernel-ipc-contracts $(BUILD_DIR)/kernel-usb-keyboard-contracts $(BUILD_DIR)/kernel-watchdog-contracts
+c-test-binaries: $(BUILD_DIR)/config-service-contracts $(BUILD_DIR)/config-parser-contracts $(BUILD_DIR)/reconfigure-contracts $(BUILD_DIR)/config-signature-contracts $(BUILD_DIR)/backup-crypto-contracts $(BUILD_DIR)/backup-contracts $(BUILD_DIR)/attestation-contracts $(BUILD_DIR)/confidential-fabric-contracts $(BUILD_DIR)/confidential-capability-contracts $(BUILD_DIR)/enclave-contracts $(BUILD_DIR)/remote-debug-contracts $(BUILD_DIR)/coredump-contracts $(BUILD_DIR)/gdb-contracts $(BUILD_DIR)/probe-contracts $(BUILD_DIR)/embedded-script-contracts $(BUILD_DIR)/wasm-script-contracts $(BUILD_DIR)/logd-contracts $(BUILD_DIR)/audit-contracts $(BUILD_DIR)/agent-contracts $(BUILD_DIR)/rms-contracts $(BUILD_DIR)/heal-contracts $(BUILD_DIR)/actor-contracts $(BUILD_DIR)/ras-contracts $(BUILD_DIR)/policy-contracts $(BUILD_DIR)/platform-io-contracts $(BUILD_DIR)/numa-contracts $(BUILD_DIR)/time-sync-contracts $(BUILD_DIR)/admission-contracts $(BUILD_DIR)/path-pattern-contracts $(BUILD_DIR)/foundation-tests $(BUILD_DIR)/kernel-contracts $(BUILD_DIR)/kernel-frame-contracts $(BUILD_DIR)/kernel-ipc-contracts $(BUILD_DIR)/kernel-usb-keyboard-contracts $(BUILD_DIR)/kernel-watchdog-contracts
 
 c-test-support: $(BUILD_DIR)/libghostos-test-support.a
 
@@ -158,4 +158,7 @@ $(BUILD_DIR)/reconfigure-contracts: c/tests/reconfigure_contracts.c $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
 
 $(BUILD_DIR)/config-parser-contracts: c/tests/config_parser_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
+
+$(BUILD_DIR)/config-service-contracts: c/tests/config_service_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
