@@ -62,3 +62,38 @@ bool ghostos_scale_same_handoff(const ghostos_scale_handoff *stored, const ghost
         stored->target_generation == token->target_generation &&
         stored->sequence == token->sequence && stored->digest == token->digest;
 }
+
+_Static_assert(sizeof(ghostos_scale_request) == 32, "scale request ABI");
+_Static_assert(offsetof(ghostos_scale_request, occupied) == 25, "scale request occupancy ABI");
+_Static_assert(sizeof(ghostos_scale_effect) == 16, "scale effect ABI");
+int ghostos_scale_route(const ghostos_scale_request *requests, size_t request_count,
+    const ghostos_scale_effect *effects, size_t effect_count, uint64_t request,
+    uint64_t session, uint64_t effect, uint8_t *decision, size_t *index) {
+    if (!effect) return 9;
+    for (size_t i = 0; i < request_count; ++i) {
+        const ghostos_scale_request *record = &requests[i];
+        if (!record->occupied || record->id != request) continue;
+        if (record->effect != effect || record->session != session) return 8;
+        *index = i;
+        *decision = record->state == 2 ? 3 : record->state == 0 ? 2 : 1;
+        return 0;
+    }
+    size_t reservations = 0;
+    for (size_t i = 0; i < effect_count; ++i) {
+        if (!effects[i].occupied) continue;
+        if (effects[i].effect == effect) { *index = i; *decision = 4; return 0; }
+        ++reservations;
+    }
+    for (size_t i = 0; i < request_count; ++i) {
+        const ghostos_scale_request *record = &requests[i];
+        if (!record->occupied) continue;
+        if (record->effect == effect) {
+            if (record->state != 0) return 8;
+            *index = i; *decision = 2; return 0;
+        }
+        if (record->state != 2) ++reservations;
+    }
+    if (reservations >= effect_count) return 1;
+    *decision = 0;
+    return 0;
+}

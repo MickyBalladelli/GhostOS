@@ -28,4 +28,16 @@ typedef struct {
     uint32_t source, target;
 } ghostos_scale_handoff;
 bool ghostos_scale_same_handoff(const ghostos_scale_handoff *stored, const ghostos_scale_handoff *token);
+typedef struct {
+    uint64_t id, session, effect;
+    uint8_t state;
+    bool occupied;
+} ghostos_scale_request;
+typedef struct { uint64_t effect; bool occupied; } ghostos_scale_effect;
+/* Request state: in flight=0, failed=1, completed=2.
+ * Decision: new=0, retry=1, in flight=2, completed request=3, completed effect=4.
+ * Additional errors: conflict=8, invalid id=9. Index names the source record. */
+int ghostos_scale_route(const ghostos_scale_request *requests, size_t request_count,
+    const ghostos_scale_effect *effects, size_t effect_count, uint64_t request,
+    uint64_t session, uint64_t effect, uint8_t *decision, size_t *index);
 #endif

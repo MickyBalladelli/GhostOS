@@ -545,3 +545,9 @@ Service scaling also calls C for session-close and handoff-preparation checks
 and checked-layout token field matching. In-flight error precedence and lazy
 snapshot digest/slice evaluation stay intact. Rust retains typed commits,
 copying, counters, and request/effect transitions.
+
+Service scaling request routing uses checked-layout request/effect views for
+native duplicate/conflict decisions, receipt source selection, retry routing,
+and reservation counts. Request-ID precedence and error ordering remain
+unchanged. Rust owns receipt conversion, commits, session checks, and counters.
+The adapter uses stack space proportional to generic ledger capacities.

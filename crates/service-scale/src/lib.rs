@@ -402,44 +402,19 @@ impl<
         session: SessionId,
         effect: u64,
     ) -> Result<RouteDecision, ScaleError> {
-        if effect == 0 {
-            return Err(ScaleError::InvalidId)
-        }
-        if let Some(index) = self.request_index(request) {
-            let record = self.requests[index].ok_or(ScaleError::NotFound)?;
-            if record.effect != effect || record.session != session {
-                return Err(ScaleError::Conflict)
+        let (decision, index) = native::route(&self.requests, &self.effects, request, session, effect)?;
+        match decision {
+            0 => {},
+            1 => return self.retry_request(index),
+            2 => {
+                let record = self.requests[index].ok_or(ScaleError::NotFound)?;
+                return Ok(RouteDecision::InFlight { instance: record.owner, attempt: record.attempt })
             }
-            return match record.state {
-                RequestState::Completed => Ok(RouteDecision::Completed(
-                    record.receipt.ok_or(ScaleError::InvalidState)?,
-                )),
-                RequestState::InFlight => Ok(RouteDecision::InFlight {
-                    instance: record.owner,
-                    attempt: record.attempt,
-                }),
-                RequestState::Failed => self.retry_request(index),
-            }
-        }
-        if let Some(effect) = self.effect_receipt(effect) {
-            return Ok(RouteDecision::Completed(effect))
-        }
-        if let Some(record) = self
-            .requests
-            .iter()
-            .flatten()
-            .find(|record| record.effect == effect)
-        {
-            return match record.state {
-                RequestState::InFlight => Ok(RouteDecision::InFlight {
-                    instance: record.owner,
-                    attempt: record.attempt,
-                }),
-                RequestState::Failed | RequestState::Completed => Err(ScaleError::Conflict),
-            }
-        }
-        if self.effect_reservations() >= EFFECTS {
-            return Err(ScaleError::Capacity)
+            3 => return Ok(RouteDecision::Completed(self.requests[index]
+                .ok_or(ScaleError::NotFound)?.receipt.ok_or(ScaleError::InvalidState)?)),
+            4 => return Ok(RouteDecision::Completed(self.effects[index]
+                .ok_or(ScaleError::NotFound)?.receipt)),
+            _ => unreachable!("native route decision"),
         }
         let session_index = self.session_index(session).ok_or(ScaleError::NotFound)?;
         let session_record = self.sessions[session_index].ok_or(ScaleError::NotFound)?;
@@ -806,16 +781,6 @@ impl<
             .flatten()
             .find(|record| record.effect == effect)
             .map(|record| record.receipt)
-    }
-
-    fn effect_reservations(&self) -> usize {
-        self.effects.iter().flatten().count()
-            + self
-                .requests
-                .iter()
-                .flatten()
-                .filter(|record| !matches!(record.state, RequestState::Completed))
-                .count()
     }
 
     fn instance_index(&self, instance: InstanceId) -> Option<usize> {

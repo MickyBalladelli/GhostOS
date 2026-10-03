@@ -20,7 +20,8 @@ fn result(code: i32) -> Result<(), ScaleError> {
         0 => Ok(()), 1 => Err(ScaleError::Capacity), 2 => Err(ScaleError::Duplicate),
         3 => Err(ScaleError::NotFound), 4 => Err(ScaleError::InvalidState),
         5 => Err(ScaleError::StaleGeneration), 6 => Err(ScaleError::InFlight),
-        7 => Err(ScaleError::NoTarget), _ => unreachable!("native scaling result"),
+        7 => Err(ScaleError::NoTarget), 8 => Err(ScaleError::Conflict),
+        9 => Err(ScaleError::InvalidId), _ => unreachable!("native scaling result"),
     }
 }
 pub(crate) fn membership<const N: usize>(records: &[Option<InstanceRecord>; N],
@@ -81,4 +82,40 @@ unsafe extern "C" {
     fn ghostos_scale_prepare(state: u8, in_flight: u16, generation: u64,
         requested_generation: u64, sequence: u64, requested_sequence: u64) -> i32;
     fn ghostos_scale_same_handoff(stored: *const Handoff, token: *const Handoff) -> bool;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Request { id: u64, session: u64, effect: u64, state: u8, occupied: bool }
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Effect { effect: u64, occupied: bool }
+pub(crate) fn route<const R: usize, const E: usize>(requests: &[Option<crate::RequestRecord>; R],
+    effects: &[Option<crate::EffectRecord>; E], request: crate::RequestId,
+    session: crate::SessionId, effect: u64) -> Result<(u8, usize), ScaleError> {
+    let requests = requests.map(|record| match record {
+        Some(record) => Request { id: record.id.raw(), session: record.session.raw(), effect: record.effect,
+            state: match record.state { crate::RequestState::InFlight => 0, crate::RequestState::Failed => 1,
+                crate::RequestState::Completed => 2 }, occupied: true },
+        None => Request { id: 0, session: 0, effect: 0, state: 0, occupied: false },
+    });
+    let effects = effects.map(|record| match record {
+        Some(record) => Effect { effect: record.effect, occupied: true },
+        None => Effect { effect: 0, occupied: false },
+    });
+    let mut decision = 0;
+    let mut index = 0;
+    result(unsafe { ghostos_scale_route(requests.as_ptr(), R, effects.as_ptr(), E,
+        request.raw(), session.raw(), effect, &mut decision, &mut index) })?;
+    Ok((decision, index))
+}
+const _: () = {
+    assert!(core::mem::size_of::<Request>() == 32);
+    assert!(core::mem::offset_of!(Request, occupied) == 25);
+    assert!(core::mem::size_of::<Effect>() == 16);
+};
+unsafe extern "C" {
+    fn ghostos_scale_route(requests: *const Request, request_count: usize,
+        effects: *const Effect, effect_count: usize, request: u64, session: u64,
+        effect: u64, decision: *mut u8, index: *mut usize) -> i32;
 }
