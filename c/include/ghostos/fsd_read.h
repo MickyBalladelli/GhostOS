@@ -21,11 +21,13 @@ enum {
 };
 typedef struct {
     bool occupied;
+    uint32_t generation;
     uint64_t process;
     uint16_t rights;
 } ghostos_fsd_read_process;
 typedef struct {
     bool occupied;
+    bool read_only_mount, append;
     uint32_t generation;
     uint64_t owner;
     uint16_t rights;
@@ -35,6 +37,8 @@ typedef struct {
 typedef struct {
     bool occupied, whole;
     uint8_t mode;
+    uint32_t generation;
+    uint64_t file;
     uint64_t owner, record;
     const uint8_t *path;
     size_t path_length;
