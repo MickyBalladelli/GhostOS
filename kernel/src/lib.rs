@@ -28,6 +28,7 @@ pub mod dlm;
 pub mod ipc;
 #[allow(unsafe_code)]
 pub mod invariants;
+#[allow(unsafe_code)]
 pub mod litmus;
 #[allow(unsafe_code)]
 pub mod micro_silo;

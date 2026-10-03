@@ -65,4 +65,10 @@ ghostos_litmus_case_report ghostos_litmus_replay_with_fault(
     ghostos_litmus_kind kind, const ghostos_litmus_schedule *schedule,
     ghostos_litmus_fault fault, uint64_t seed);
 
+/* Rust-compatible malformed public schedule handling: false means an
+ * out-of-bounds access would occur during execution or minimization. */
+bool ghostos_litmus_replay_checked(ghostos_litmus_kind kind,
+    const ghostos_litmus_schedule *schedule, ghostos_litmus_fault fault,
+    uint64_t seed, ghostos_litmus_case_report *report);
+
 #endif

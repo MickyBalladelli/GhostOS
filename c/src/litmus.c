@@ -231,3 +231,34 @@ ghostos_litmus_suite_report ghostos_litmus_run_suite(uint64_t seed) {
     for (unsigned i = 0; i < GHOSTOS_LITMUS_COUNT; ++i) suite.cases[i] = ghostos_litmus_run_case((ghostos_litmus_kind)i, seed);
     return suite;
 }
+
+_Static_assert(sizeof(ghostos_litmus_schedule) == 33, "litmus schedule ABI");
+_Static_assert(sizeof(ghostos_litmus_case_report) == 96, "litmus report ABI");
+_Static_assert(offsetof(ghostos_litmus_case_report, failure) == 52, "litmus failure ABI");
+_Static_assert(offsetof(ghostos_litmus_case_report, minimal_failing_schedule) == 57, "litmus minimum ABI");
+
+bool ghostos_litmus_replay_checked(ghostos_litmus_kind kind,
+    const ghostos_litmus_schedule *schedule, ghostos_litmus_fault fault,
+    uint64_t seed, ghostos_litmus_case_report *report) {
+    *report = (ghostos_litmus_case_report){0};
+    report->kind = kind;
+    report->seed = seed;
+    report->interleaving = *schedule;
+    machine m = new_machine(kind);
+    for (size_t i = 0; i < schedule->len; ++i) {
+        if (i >= GHOSTOS_LITMUS_MAX_SCHEDULE_STEPS) return false;
+        uint8_t actor = schedule->steps[i];
+        if (!enabled(&m, actor)) return true;
+        report->failure = step(&m, actor, fault);
+        if (report->failure != GHOSTOS_LITMUS_FAILURE_NONE) break;
+    }
+    if (report->failure == GHOSTOS_LITMUS_FAILURE_NONE) report->failure = failure(&m);
+    report->has_failure = report->failure != GHOSTOS_LITMUS_FAILURE_NONE;
+    if (report->has_failure) {
+        /* without(0) indexes the entire original schedule before executing. */
+        if (schedule->len > GHOSTOS_LITMUS_MAX_SCHEDULE_STEPS) return false;
+        report->minimal_failing_schedule = minimize(kind, *schedule, fault);
+        report->has_minimal_failing_schedule = true;
+    }
+    return true;
+}
