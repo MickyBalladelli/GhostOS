@@ -10,6 +10,7 @@ typedef struct {
     const uint8_t *name;
     uint8_t name_length;
     uint32_t version, cursor;
+    uint64_t object_id;
     bool deleted;
 } ghostos_fsd_record;
 int ghostos_fsd_expand(const uint8_t *pattern, size_t pattern_length, const ghostos_fsd_record *records,

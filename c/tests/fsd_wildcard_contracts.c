@@ -7,6 +7,7 @@ static ghostos_fsd_record record(const uint8_t *name, uint8_t length, uint32_t v
     item.name_length = length;
     item.version = version;
     item.cursor = cursor;
+    item.object_id = 0;
     item.deleted = false;
     return item;
 }
