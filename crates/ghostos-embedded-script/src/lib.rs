@@ -135,7 +135,7 @@ impl AutomationContext {
         let code = if capabilities.len() > MAX_SCRIPT_CAPABILITIES {
             crate::native::names(&[], &[], capabilities.len(), MAX_SCRIPT_CAPABILITIES)
         } else {
-            let mut names = [core::ptr::null(); MAX_SCRIPT_CAPABILITIES];
+            let mut names = [core::ptr::null::<u8>(); MAX_SCRIPT_CAPABILITIES];
             let mut lengths = [0; MAX_SCRIPT_CAPABILITIES];
             for (index, capability) in capabilities.iter().enumerate() {
                 names[index] = capability.resource.as_ptr();

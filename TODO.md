@@ -512,7 +512,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostos-audit/` — C owns advisory identifier checks, advisory and obsolescence slot selection, out-of-date version ordering, finding de-duplication, and scan-budget validation. Rust retains feed insertion records, withdrawn-match filtering, package iteration, and batch scheduling. No existing audit tests were present; C contract checks cover the slot rules.
 - [ ] `crates/ghostos-backup/` — backup and recovery.
 - [ ] `crates/ghostos-confidential/` — confidential computing.
-- [ ] `crates/ghostos-debug/` — debugging subsystem.
+- [ ] `crates/ghostos-debug/` — C probe programs in `c/src/probes.c` verify forward-only jumps, execute bounded arithmetic, and record emitted values in a ring. GDB framing, coredumps, and remote sessions remain to be ported. Rust sources were not changed.
 - [ ] `crates/ghostos-declarative/` — declarative configuration.
 - [ ] `crates/ghostos-embedded-script/` — C owns script limits, capability names, operation masks, duplicate resources, source size, and request admission. Rust retains the Rhai engine and request storage. Existing capability tests were executed.
 - [ ] `crates/ghostos-heal/` — C owns health-service validation, duplicate detection, registration-id arithmetic, progress timestamp decisions, fault classification, and recovery slot selection, generation wrap, and replacement-process acceptance. Rust retains atomic loads and stores in their original order, trace emission, GhostFS checkpoints, and recovery runtime calls. Existing health and recovery behavior was executed; hot-swap and kernel-patch orchestration remain Rust.
@@ -987,3 +987,26 @@ syntax checks passed for `c/src/wasm_script.c` on all three targets. Logs:
 `temp/wasm-script-contract-build.log`, `temp/wasm-script-x86-build.log`,
 `temp/wasm-script-aarch64-build.log`, and `temp/wasm-script-riscv64-build.log`.
 Full Rust removal and broader behavior parity remain open.
+
+Embedded-script progress on 2026-10-03: `c/src/embedded_script.c` now owns
+script limits, capability-name checks, operation masks, duplicate resource
+names, source-size checks, and request admission. Invalid operations are still
+rejected before payload and capability scans, and a too-large payload is still
+rejected before capability lookup. Rust retains the Rhai engine and request
+storage. `build/c/embedded-script-contracts` passed, as did `make c-library`
+and strict freestanding syntax checks for `c/src/embedded_script.c` on x86-64,
+AArch64, and RISC-V. The Rust package tests and target library builds were
+not run: Cargo could not download the Rhai dependency `ahash`. Logs:
+`temp/c-library-embedded-script-build.log` and
+`temp/embedded-script-contract-build.log`. Full Rust removal and broader
+behavior parity remain open.
+
+Debug-probe progress on 2026-10-03: `c/src/probes.c` is a C probe machine.
+It checks that a program ends in halt, rejects backward and out-of-range
+jumps, executes wrapping arithmetic, and stores emitted values in a ring that
+counts overwritten records. The existing arithmetic case produces 42 and the
+self-jump program is rejected. `build/c/probe-contracts` passed. `make
+c-library` passed, and strict freestanding syntax checks passed for
+`c/src/probes.c` on x86-64, AArch64, and RISC-V. No Rust sources were edited
+and Cargo was not used. GDB framing, coredumps, and remote sessions remain.
+Logs: `temp/c-library-probes-build.log` and `temp/probe-contract-build.log`.
