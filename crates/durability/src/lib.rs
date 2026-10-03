@@ -1,5 +1,4 @@
 #![no_std]
-#![forbid(unsafe_code)]
 
 /// Persistence owner used to label a deterministic interruption point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -187,6 +186,7 @@ pub enum ContractError {
 /// Fixed-capacity ordering proof used by layer and power-loss tests.
 pub struct DurabilityTrace<const CAPACITY: usize> {
     events: [Option<DurabilityEvent>; CAPACITY],
+    records: [EventRecord; CAPACITY],
     length: usize,
 }
 
@@ -194,138 +194,43 @@ impl<const CAPACITY: usize> DurabilityTrace<CAPACITY> {
     pub const fn new() -> Self {
         Self {
             events: [None; CAPACITY],
+            records: [EventRecord::EMPTY; CAPACITY],
             length: 0,
         }
     }
 
     pub fn record(&mut self, event: DurabilityEvent) -> Result<(), ContractError> {
-        let slot = self.events.get_mut(self.length).ok_or(ContractError::TraceFull)?;
-        *slot = Some(event);
-        self.length += 1;
+        let index = self.length;
+        // C writes one record within the supplied capacity and updates length.
+        let code = unsafe {
+            ghostos_durability_record(self.records.as_mut_ptr(), CAPACITY,
+                &mut self.length, EventRecord::from_event(event))
+        };
+        if code != 0 {
+            return Err(ContractError::TraceFull)
+        }
+        self.events[index] = Some(event);
         Ok(())
     }
 
     pub fn verify(&self) -> Result<(), ContractError> {
-        for index in 0..self.length {
-            let Some(DurabilityEvent::SyncAcknowledged { transaction }) = self.events[index]
-            else {
-                continue
-            };
-            let application = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::ApplicationWrite { .. })
-            });
-            let ghostfs_write = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::SynFsWrite { .. })
-            });
-            let commit = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::Commit { .. })
-            });
-            let data = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::BlockDataWrite { .. })
-            });
-            let commit_record = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::BlockCommitRecord { .. })
-            });
-            let block_flush = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::BlockFlush { .. })
-            });
-            let Some(application) = application else {
-                return Err(ContractError::MissingStep { transaction })
-            };
-            let Some(ghostfs_write) = ghostfs_write else {
-                return Err(ContractError::MissingStep { transaction })
-            };
-            let Some(commit) = commit else {
-                return Err(ContractError::MissingStep { transaction })
-            };
-            let Some(data) = data else {
-                return Err(ContractError::MissingStep { transaction })
-            };
-            let Some(commit_record) = commit_record else {
-                return Err(ContractError::MissingStep { transaction })
-            };
-            let Some(block_flush) = block_flush else {
-                return Err(ContractError::MissingStep { transaction })
-            };
-            if !(application < ghostfs_write
-                && ghostfs_write < commit
-                && commit < data
-                && data < commit_record
-                && commit_record < block_flush
-                && block_flush < index)
-            {
-                return Err(ContractError::InvalidOrder { transaction })
-            }
-            let storage = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::StorageDaemonWrite { .. })
-            });
-            let cache = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::CacheFlush { .. })
-            });
-            let rename = self.find_before(index, transaction, |event| {
-                matches!(event, DurabilityEvent::Rename { .. })
-            });
-            if rename.is_some_and(|rename| rename > commit)
-                || storage.is_some_and(|storage| storage < commit || storage > data)
-                || cache.is_some_and(|cache| cache < storage.unwrap_or(commit))
-                || cache.is_some_and(|cache| cache > data)
-                || cache.is_some_and(|_| storage.is_none())
-                || self.has_data_after_commit_record(transaction, commit_record, index)
-            {
-                return Err(ContractError::InvalidOrder { transaction })
-            }
+        let mut transaction = 0;
+        // C reads initialized event records and retains no pointers.
+        let code = unsafe {
+            ghostos_durability_verify(self.records.as_ptr(), self.length, &mut transaction)
+        };
+        match code {
+            0 => Ok(()),
+            2 => Err(ContractError::MissingStep { transaction }),
+            3 => Err(ContractError::InvalidOrder { transaction }),
+            _ => Err(ContractError::RecoveredVolatile { transaction }),
         }
-
-        let mut power_loss = None;
-        for index in 0..self.length {
-            match self.events[index] {
-                Some(DurabilityEvent::PowerLoss) => power_loss = Some(index),
-                Some(DurabilityEvent::Recovered { transaction }) => {
-                    let Some(power_loss) = power_loss else {
-                        return Err(ContractError::RecoveredVolatile { transaction })
-                    };
-                    let durable = (0..power_loss).any(|before| {
-                        self.events[before]
-                            == Some(DurabilityEvent::SyncAcknowledged { transaction })
-                    });
-                    if !durable {
-                        return Err(ContractError::RecoveredVolatile { transaction })
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     pub fn events(&self) -> &[Option<DurabilityEvent>] {
         &self.events[..self.length]
     }
 
-    fn find_before(
-        &self,
-        end: usize,
-        transaction: u64,
-        predicate: impl Fn(DurabilityEvent) -> bool,
-    ) -> Option<usize> {
-        (0..end).rev().find(|index| {
-            self.events[*index].is_some_and(|event| match event {
-                DurabilityEvent::PowerLoss | DurabilityEvent::Recovered { .. } => false,
-                _ => event_transaction(event) == Some(transaction) && predicate(event),
-            })
-        })
-    }
-
-    fn has_data_after_commit_record(
-        &self,
-        transaction: u64,
-        commit_record: usize,
-        end: usize,
-    ) -> bool {
-        self.events[commit_record + 1..end].iter().flatten().any(|event| {
-            matches!(event, DurabilityEvent::BlockDataWrite { transaction: value } if *value == transaction)
-        })
-    }
 }
 
 impl<const CAPACITY: usize> Default for DurabilityTrace<CAPACITY> {
@@ -334,18 +239,46 @@ impl<const CAPACITY: usize> Default for DurabilityTrace<CAPACITY> {
     }
 }
 
-fn event_transaction(event: DurabilityEvent) -> Option<u64> {
-    match event {
-        DurabilityEvent::ApplicationWrite { transaction }
-        | DurabilityEvent::SynFsWrite { transaction }
-        | DurabilityEvent::Rename { transaction }
-        | DurabilityEvent::Commit { transaction }
-        | DurabilityEvent::StorageDaemonWrite { transaction }
-        | DurabilityEvent::CacheFlush { transaction }
-        | DurabilityEvent::BlockDataWrite { transaction }
-        | DurabilityEvent::BlockCommitRecord { transaction }
-        | DurabilityEvent::BlockFlush { transaction }
-        | DurabilityEvent::SyncAcknowledged { transaction } => Some(transaction),
-        DurabilityEvent::PowerLoss | DurabilityEvent::Recovered { .. } => None,
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct EventRecord {
+    transaction: u64,
+    kind: u32,
+    reserved: u32,
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<EventRecord>() == 16);
+    assert!(core::mem::offset_of!(EventRecord, transaction) == 0);
+    assert!(core::mem::offset_of!(EventRecord, kind) == 8);
+    assert!(core::mem::offset_of!(EventRecord, reserved) == 12);
+};
+
+impl EventRecord {
+    const EMPTY: Self = Self { transaction: 0, kind: 0, reserved: 0 };
+
+    fn from_event(event: DurabilityEvent) -> Self {
+        let (kind, transaction) = match event {
+            DurabilityEvent::ApplicationWrite { transaction } => (0, transaction),
+            DurabilityEvent::SynFsWrite { transaction } => (1, transaction),
+            DurabilityEvent::Rename { transaction } => (2, transaction),
+            DurabilityEvent::Commit { transaction } => (3, transaction),
+            DurabilityEvent::StorageDaemonWrite { transaction } => (4, transaction),
+            DurabilityEvent::CacheFlush { transaction } => (5, transaction),
+            DurabilityEvent::BlockDataWrite { transaction } => (6, transaction),
+            DurabilityEvent::BlockCommitRecord { transaction } => (7, transaction),
+            DurabilityEvent::BlockFlush { transaction } => (8, transaction),
+            DurabilityEvent::SyncAcknowledged { transaction } => (9, transaction),
+            DurabilityEvent::PowerLoss => (10, 0),
+            DurabilityEvent::Recovered { transaction } => (11, transaction),
+        };
+        Self { transaction, kind, reserved: 0 }
     }
+}
+
+unsafe extern "C" {
+    fn ghostos_durability_record(events: *mut EventRecord, capacity: usize,
+        length: *mut usize, event: EventRecord) -> u32;
+    fn ghostos_durability_verify(events: *const EventRecord, length: usize,
+        failed_transaction: *mut u64) -> u32;
 }

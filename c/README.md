@@ -17,6 +17,7 @@ Host VM modules use the host allocator and console callbacks. `CC`, `AR`,
 
 | Rust source | C implementation | Public header |
 | --- | --- | --- |
+| `crates/durability/src/lib.rs` (active bounded trace recording, ordering/recovery verification, and C layer contracts) | `src/durability.c` | `include/ghostos/durability.h` |
 | `crates/status/src/lib.rs` | `src/status.c` | `include/ghostos/status.h` |
 | `crates/abi/src/generated.rs` | `src/abi.c` | `include/ghostos/abi.h` |
 | `crates/api-compat/src/lib.rs` | `src/api_compat.c` | `include/ghostos/api_compat.h` |

@@ -280,6 +280,21 @@ and existing test fixtures. No tests were executed; platform coverage, parity,
 and full Rust removal remain open. Logs are in `temp/c-library-uefi.log` and
 `temp/vm-build-uefi.log`.
 
+Durability build checks on 2026-10-03: `make c-library` and
+`cargo build -p ghostos-durability -p ghostos-ghostfs -p ghostos-declarative
+-p ghostos-update -p ghostos-storaged -p ghostos-init -p ghostos-pkg
+-p ghostos-test-support -p ghostos-system-model` passed on AArch64 macOS.
+C owns active bounded trace recording and two-pass ordering/recovery validation.
+The source preserves latest-matching-step selection, missing-step-before-order
+errors, optional rename/storage/cache rules, post-commit data rejection,
+sync-validation-before-recovery errors, and recovery against the latest power
+loss without clearing earlier acknowledgements. Shared event size and offsets
+are compile-time checked. The Rust typed event view uses parallel C records,
+increasing trace storage; Rust enums, const tables, traits, and build adapters
+remain. No tests were executed; behavior parity and full migration remain open.
+Build logs are in `temp/c-library-durability.log` and
+`temp/durability-consumers-build.log`.
+
 ## Rust source modules to port
 
 ### Kernel and virtual machine modules
@@ -404,7 +419,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/boot-protocol/` — boot protocol and handoff.
 - [ ] `crates/client-sdk/` — client SDK and wire protocol.
 - [ ] `crates/compute/` — tensor and accelerator compute.
-- [ ] `crates/durability/` — durability contracts.
+- [ ] `crates/durability/` — C owns active bounded trace recording and durable-write ordering/recovery verification, with a matching six-layer contract table and interruption callback API. Rust retains public enums, const contract tables, injector traits, and the typed event view (with parallel C records). Rust build/adapters, behavior parity, and full removal remain.
 - [ ] `crates/fabric/` — cluster fabric, memory, CXL, and DSM.
 - [ ] `crates/fsd/` — filesystem daemon.
 - [ ] `crates/ghostfs/` — GhostFS storage and volume management.
