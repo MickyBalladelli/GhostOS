@@ -1761,5 +1761,9 @@ C daemon open progress on 2026-10-03:
 - [x] Add non-following lookup to the C block reader so existence checks do not incorrectly follow a dangling symlink. Return already-exists through the original status ABI.
 - [ ] Supply persistent C empty-write callbacks, wire request dispatch/tracing, and complete the active service cutover and behavior verification. Storage callbacks must rebuild the reader after a successful mutation. Full migration remains incomplete.
 
-Build verification is recorded below after the final build. No tests were run.
-No Rust sources were changed and Cargo was not used.
+`make -j4 c-library` passed. Strict freestanding compilation of the open,
+reader, and range modules passed on x86-64, AArch64, and RISC-V. The seven
+open/namespace/handle/read modules linked into a relocatable object. No tests
+were run. No Rust sources were changed and Cargo was not used. Temporary build
+log and link object are ready for cleanup: `temp/c-library-fsd-open-build.log`
+and `temp/fsd-open-link.o`.
