@@ -7,12 +7,308 @@
 use crate::{
     DhcpServerConfig, DeterministicVmNetwork, NetworkBackendConfig, Vm, VmConfig, VmError,
 };
-use core::mem::size_of;
-use std::collections::VecDeque;
 use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::ffi::c_void;
 use std::rc::Rc;
 use ghostos_fabric::memory::{GlobalAddressSpace, MemoryKind, MemoryPool, PoolId, Transport};
 use ghostos_fabric::{AddressRange, Error as FabricError, NodeId as FabricNodeId, PAGE_SIZE};
+
+#[repr(C)]
+struct CClusterNode {
+    used: bool,
+    id: CClusterNodeId,
+    state: CClusterNodeState,
+    executed_steps: u64,
+    heartbeat_sequence: u64,
+    vm_context: *mut c_void,
+    run_vm: Option<unsafe extern "C" fn(*mut c_void, u64, *mut u64) -> CClusterError>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterNodeId {
+    raw: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterNetworkConfig {
+    latency_ticks: u64,
+    loss_percent: u8,
+    duplicate_percent: u8,
+    reorder: bool,
+    seed: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterNetworkOutcome {
+    result: CClusterNetworkResult,
+    copies: u8,
+    deliver_at: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterNetworkTrace {
+    tick: u64,
+    source: CClusterNodeId,
+    target: CClusterNodeId,
+    outcome: CClusterNetworkOutcome,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterPacket {
+    used: bool,
+    source: CClusterNodeId,
+    target: CClusterNodeId,
+    deliver_at: u64,
+    sequence: u64,
+    length: usize,
+    payload: [u8; 1500],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterPartition {
+    left: CClusterNodeId,
+    right: CClusterNodeId,
+}
+
+#[repr(C)]
+struct CClusterNetwork {
+    config: CClusterNetworkConfig,
+    tick: u64,
+    random_state: u64,
+    next_sequence: u64,
+    in_flight: [CClusterPacket; 4096],
+    delivered: [CClusterPacket; 4096],
+    delivered_count: usize,
+    partitions: [CClusterPartition; 4096],
+    partition_count: usize,
+    trace: [CClusterNetworkTrace; 8192],
+    trace_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterSharedDevice {
+    size: usize,
+    epoch: u64,
+    present: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterSharedMapping {
+    node: CClusterNodeId,
+    offset: usize,
+    length: usize,
+    epoch: u64,
+}
+
+#[repr(C)]
+struct CClusterSharedMemory {
+    bytes: *mut u8,
+    size: usize,
+    epoch: u64,
+    present: bool,
+    corrupted: bool,
+    nodes: [CClusterNodeId; 1000],
+    node_count: usize,
+    failed: [CClusterNodeId; 1000],
+    failed_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterHeartbeat {
+    source: CClusterNodeId,
+    sequence: u64,
+    epoch: u64,
+    tick: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterStatus {
+    epoch: u64,
+    members: usize,
+    running: usize,
+    quorum: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterScaleEvidence {
+    nodes: usize,
+    discovered_nodes: usize,
+    heartbeat_messages: usize,
+    control_plane_traffic_bytes: usize,
+    control_plane_memory_bytes: usize,
+    convergence_ticks: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterFaultRecord {
+    node: CClusterNodeId,
+    workload: CClusterWorkload,
+    recovered: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CClusterObservedHeartbeat {
+    target: CClusterNodeId,
+    source: CClusterNodeId,
+    sequence: u64,
+}
+
+#[repr(C)]
+struct CCluster {
+    nodes: [CClusterNode; 1000],
+    node_count: usize,
+    network: CClusterNetwork,
+    shared_memory: CClusterSharedMemory,
+    epoch: u64,
+    observed: [CClusterObservedHeartbeat; 4000],
+    observed_count: usize,
+    faults: [CClusterFaultRecord; 1024],
+    fault_count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CClusterError {
+    Ok = 0,
+    InvalidId,
+    InvalidConfig,
+    Capacity,
+    DuplicateNode,
+    UnknownNode,
+    NodeNotRunning,
+    InvalidSharedSize,
+    InvalidSharedRange,
+    SharedUnavailable,
+    SharedCorrupt,
+    StaleEpoch,
+    NoFault,
+    BufferTooSmall,
+    VmError,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CClusterNodeState {
+    Running,
+    Isolated,
+    Failed,
+    Stopped,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CClusterNetworkResult {
+    Queued,
+    Dropped,
+    Partitioned,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CClusterWorkload {
+    Ipc,
+    FilesystemCommit,
+    MemoryFetch,
+    Inference,
+    MembershipChange,
+}
+
+unsafe extern "C" {
+    fn ghostos_cluster_node_id_from_raw(raw: u32, out: *mut CClusterNodeId) -> bool;
+    fn ghostos_vm_cluster_init(
+        cluster: *mut CCluster,
+        config: CClusterNetworkConfig,
+        shared_storage: *mut u8,
+        shared_size: usize,
+    ) -> CClusterError;
+    fn ghostos_vm_cluster_add_node(
+        cluster: *mut CCluster,
+        id: CClusterNodeId,
+        vm_context: *mut c_void,
+        run_vm: Option<unsafe extern "C" fn(*mut c_void, u64, *mut u64) -> CClusterError>,
+    ) -> CClusterError;
+    fn ghostos_vm_cluster_status(cluster: *const CCluster) -> CClusterStatus;
+    fn ghostos_vm_cluster_heartbeat(
+        cluster: *mut CCluster,
+        source: CClusterNodeId,
+        out: *mut CClusterHeartbeat,
+    ) -> CClusterError;
+    fn ghostos_vm_cluster_observe_heartbeat(
+        cluster: *mut CCluster,
+        target: CClusterNodeId,
+        heartbeat: CClusterHeartbeat,
+    ) -> CClusterError;
+    fn ghostos_vm_cluster_run_node(
+        cluster: *mut CCluster,
+        id: CClusterNodeId,
+        steps: u64,
+        executed: *mut u64,
+    ) -> CClusterError;
+    fn ghostos_vm_cluster_send(
+        cluster: *mut CCluster,
+        source: CClusterNodeId,
+        target: CClusterNodeId,
+        payload: *const u8,
+        length: usize,
+        out: *mut CClusterNetworkOutcome,
+    ) -> CClusterError;
+    fn ghostos_vm_cluster_fault(
+        cluster: *mut CCluster,
+        kind: u32,
+        left: CClusterNodeId,
+        right: CClusterNodeId,
+        workload: CClusterWorkload,
+    ) -> CClusterError;
+    fn ghostos_vm_cluster_recover_last_fault(cluster: *mut CCluster) -> CClusterError;
+    fn ghostos_vm_cluster_scale(cluster: *const CCluster) -> CClusterScaleEvidence;
+    fn ghostos_cluster_network_receive(
+        network: *mut CClusterNetwork,
+        target: CClusterNodeId,
+        out: *mut CClusterPacket,
+        capacity: usize,
+    ) -> usize;
+    fn ghostos_cluster_network_advance(network: *mut CClusterNetwork, ticks: u64);
+    fn ghostos_cluster_shared_discover(memory: *const CClusterSharedMemory) -> CClusterSharedDevice;
+    fn ghostos_cluster_shared_map(
+        memory: *const CClusterSharedMemory,
+        node: CClusterNodeId,
+        offset: usize,
+        length: usize,
+        out: *mut CClusterSharedMapping,
+    ) -> CClusterError;
+    fn ghostos_cluster_shared_read(
+        memory: *const CClusterSharedMemory,
+        node: CClusterNodeId,
+        offset: usize,
+        out: *mut u8,
+        length: usize,
+    ) -> CClusterError;
+    fn ghostos_cluster_shared_write(
+        memory: *mut CClusterSharedMemory,
+        node: CClusterNodeId,
+        offset: usize,
+        data: *const u8,
+        length: usize,
+    ) -> CClusterError;
+    fn ghostos_cluster_shared_hot_remove(memory: *mut CClusterSharedMemory);
+    fn ghostos_cluster_shared_restore(memory: *mut CClusterSharedMemory);
+    fn ghostos_cluster_shared_corrupt(memory: *mut CClusterSharedMemory);
+    fn ghostos_cluster_shared_repair(memory: *mut CClusterSharedMemory);
+}
 
 const MAX_CLUSTER_NODES: usize = 1_000;
 
@@ -737,31 +1033,49 @@ impl From<FabricError> for ClusterError {
 
 /// Multi-node VM coordinator used by deterministic and opt-in cluster tests.
 pub struct VmCluster {
-    nodes: Vec<ClusterNode>,
+    nodes: Vec<Box<ClusterNode>>,
     network: ClusterNetwork,
     vm_network: Rc<RefCell<DeterministicVmNetwork>>,
     cxl: CxlFabricFixture,
-    shared_memory: SharedMemoryFixture,
+    _shared_memory: SharedMemoryFixture,
     epoch: u64,
     heartbeat_sequences: Vec<(ClusterNodeId, u64)>,
     observed_heartbeats: Vec<(ClusterNodeId, ClusterNodeId, u64)>,
     fault_records: Vec<ClusterFaultRecord>,
+    c_cluster: Box<CCluster>,
+    _shared_memory_storage: Vec<u8>,
 }
 
 impl VmCluster {
     pub fn new(network: ClusterNetworkConfig) -> Result<Self, ClusterError> {
         let vm_network = DeterministicVmNetwork::new(Some(DhcpServerConfig::default()))
             .map_err(|error| ClusterError::Vm(VmError::Network(error.to_string())))?;
+        let mut c_cluster = Box::<std::mem::MaybeUninit<CCluster>>::new_zeroed();
+        let mut shared_memory_storage = vec![0; PAGE_SIZE as usize];
+        map_cluster_error(
+            unsafe {
+                ghostos_vm_cluster_init(
+                    c_cluster.as_mut_ptr().cast::<CCluster>(),
+                    to_c_network_config(network),
+                    shared_memory_storage.as_mut_ptr(),
+                    shared_memory_storage.len(),
+                )
+            },
+            None,
+        )?;
+        let c_cluster = unsafe { Box::from_raw(Box::into_raw(c_cluster).cast::<CCluster>()) };
         Ok(Self {
             nodes: Vec::new(),
             network: ClusterNetwork::new(network)?,
             vm_network,
             cxl: CxlFabricFixture::new(),
-            shared_memory: SharedMemoryFixture::default(),
+            _shared_memory: SharedMemoryFixture::default(),
             epoch: 1,
             heartbeat_sequences: Vec::new(),
             observed_heartbeats: Vec::new(),
             fault_records: Vec::new(),
+            c_cluster,
+            _shared_memory_storage: shared_memory_storage,
         })
     }
 
@@ -776,27 +1090,38 @@ impl VmCluster {
             };
             config.dhcp_server = None;
         }
-        self.nodes.push(ClusterNode {
+        self.nodes.push(Box::new(ClusterNode {
             id,
             vm: Vm::try_with_config(config)?,
             state: ClusterNodeState::Running,
             executed_steps: 0,
-        });
-        self.shared_memory.register_node(id);
-        self.heartbeat_sequences.push((id, 0));
+        }));
+        let node_ref = self.nodes.last_mut().expect("cluster node inserted").as_mut();
+        map_cluster_error(
+            unsafe {
+                ghostos_vm_cluster_add_node(
+                    &mut *self.c_cluster,
+                    to_c_node_id(id),
+                    (&mut node_ref.vm as *mut Vm).cast(),
+                    Some(run_vm_from_c),
+                )
+            },
+            Some(id),
+        )?;
+        self.sync_from_c();
         Ok(())
     }
 
     pub fn node(&self, id: ClusterNodeId) -> Option<&ClusterNode> {
-        self.nodes.iter().find(|node| node.id == id)
+        self.nodes.iter().find(|node| node.id == id).map(Box::as_ref)
     }
 
     pub fn node_mut(&mut self, id: ClusterNodeId) -> Option<&mut ClusterNode> {
-        self.nodes.iter_mut().find(|node| node.id == id)
+        self.nodes.iter_mut().find(|node| node.id == id).map(Box::as_mut)
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = &ClusterNode> {
-        self.nodes.iter()
+        self.nodes.iter().map(Box::as_ref)
     }
 
     pub fn network(&self) -> &ClusterNetwork {
@@ -819,26 +1144,20 @@ impl VmCluster {
         &mut self.cxl
     }
 
-    pub fn shared_memory(&self) -> &SharedMemoryFixture {
-        &self.shared_memory
+    pub fn shared_memory(&self) -> SharedMemoryFixtureView<'_> {
+        SharedMemoryFixtureView {
+            memory: &self.c_cluster.shared_memory,
+        }
     }
 
-    pub fn shared_memory_mut(&mut self) -> &mut SharedMemoryFixture {
-        &mut self.shared_memory
+    pub fn shared_memory_mut(&mut self) -> SharedMemoryFixtureMut<'_> {
+        SharedMemoryFixtureMut {
+            memory: &mut self.c_cluster.shared_memory,
+        }
     }
 
     pub fn status(&self) -> ClusterStatus {
-        let running = self
-            .nodes
-            .iter()
-            .filter(|node| node.state == ClusterNodeState::Running)
-            .count();
-        ClusterStatus {
-            epoch: self.epoch,
-            members: self.nodes.len(),
-            running,
-            quorum: running >= self.nodes.len() / 2 + 1,
-        }
+        from_c_status(unsafe { ghostos_vm_cluster_status(&*self.c_cluster) })
     }
 
     pub fn epoch(&self) -> u64 {
@@ -846,26 +1165,22 @@ impl VmCluster {
     }
 
     pub fn discover_nodes(&self) -> Vec<ClusterNodeId> {
-        self.nodes.iter().map(ClusterNode::id).collect()
+        self.nodes.iter().map(|node| node.id()).collect()
     }
 
     pub fn heartbeat(&mut self, source: ClusterNodeId) -> Result<ClusterHeartbeat, ClusterError> {
-        let node = self.node(source).ok_or(ClusterError::UnknownNode(source))?;
-        if node.state != ClusterNodeState::Running {
-            return Err(ClusterError::NodeNotRunning(source));
-        }
-        let sequence = self
-            .heartbeat_sequences
-            .iter_mut()
-            .find(|entry| entry.0 == source)
-            .ok_or(ClusterError::UnknownNode(source))?;
-        sequence.1 = sequence.1.saturating_add(1);
-        Ok(ClusterHeartbeat {
-            source,
-            sequence: sequence.1,
-            epoch: self.epoch,
-            tick: self.network.tick(),
-        })
+        let mut heartbeat = CClusterHeartbeat {
+            source: to_c_node_id(source),
+            sequence: 0,
+            epoch: 0,
+            tick: 0,
+        };
+        map_cluster_error(
+            unsafe { ghostos_vm_cluster_heartbeat(&mut *self.c_cluster, to_c_node_id(source), &mut heartbeat) },
+            Some(source),
+        )?;
+        self.sync_from_c();
+        Ok(from_c_heartbeat(heartbeat))
     }
 
     pub fn observe_heartbeat(
@@ -873,30 +1188,17 @@ impl VmCluster {
         target: ClusterNodeId,
         heartbeat: ClusterHeartbeat,
     ) -> Result<(), ClusterError> {
-        let node = self.node(target).ok_or(ClusterError::UnknownNode(target))?;
-        if node.state != ClusterNodeState::Running {
-            return Err(ClusterError::NodeNotRunning(target));
-        }
-        if heartbeat.epoch != self.epoch {
-            return Err(ClusterError::StaleEpoch);
-        }
-        if !self
-            .observed_heartbeats
-            .iter()
-            .any(|entry| entry.0 == target && entry.1 == heartbeat.source)
-        {
-            self.observed_heartbeats
-                .push((target, heartbeat.source, heartbeat.sequence));
-        } else if let Some(entry) = self
-            .observed_heartbeats
-            .iter_mut()
-            .find(|entry| entry.0 == target && entry.1 == heartbeat.source)
-        {
-            if heartbeat.sequence <= entry.2 {
-                return Ok(())
-            }
-            entry.2 = heartbeat.sequence;
-        }
+        map_cluster_error(
+            unsafe {
+                ghostos_vm_cluster_observe_heartbeat(
+                    &mut *self.c_cluster,
+                    to_c_node_id(target),
+                    to_c_heartbeat(heartbeat),
+                )
+            },
+            Some(target),
+        )?;
+        self.sync_from_c();
         Ok(())
     }
 
@@ -919,151 +1221,445 @@ impl VmCluster {
             network_events: self.network.trace().len(),
             pending_packets: self.network.pending_packets(),
             cxl_devices: self.cxl.pools().count(),
-            shared_memory: self.shared_memory.discover(),
+            shared_memory: self.shared_memory().discover(),
         }
     }
 
     pub fn scale_evidence(&self) -> ClusterScaleEvidence {
-        let nodes = self.nodes.len();
-        let discovered_nodes = self.discover_nodes().len();
-        let heartbeat_messages = self.network.trace().len();
-        let control_plane_traffic_bytes = discovered_nodes
-            .saturating_mul(size_of::<ClusterNodeId>())
-            .saturating_add(heartbeat_messages.saturating_mul(ClusterHeartbeat::WIRE_BYTES));
-        let control_plane_memory_bytes = nodes
-            .saturating_mul(size_of::<ClusterNodeId>())
-            .saturating_add(
-                self.heartbeat_sequences
-                    .len()
-                    .saturating_mul(size_of::<(ClusterNodeId, u64)>()),
-            )
-            .saturating_add(
-                self.observed_heartbeats
-                    .len()
-                    .saturating_mul(size_of::<(ClusterNodeId, ClusterNodeId, u64)>()),
-            )
-            .saturating_add(self.fault_records.len().saturating_mul(size_of::<ClusterFaultRecord>()));
-        ClusterScaleEvidence {
-            nodes,
-            discovered_nodes,
-            heartbeat_messages,
-            control_plane_traffic_bytes,
-            control_plane_memory_bytes,
-            convergence_ticks: self.network.tick(),
-        }
+        from_c_scale_evidence(unsafe { ghostos_vm_cluster_scale(&*self.c_cluster) })
     }
 
     pub fn run_node(&mut self, id: ClusterNodeId, steps: u64) -> Result<u64, ClusterError> {
-        let node = self.node_mut(id).ok_or(ClusterError::UnknownNode(id))?;
-        if node.state != ClusterNodeState::Running {
-            return Err(ClusterError::NodeNotRunning(id));
-        }
-        let report = node.vm.run_for_steps(steps)?;
-        node.executed_steps = node.executed_steps.saturating_add(report.steps);
-        Ok(report.steps)
+        let mut executed = 0;
+        map_cluster_error(
+            unsafe { ghostos_vm_cluster_run_node(&mut *self.c_cluster, to_c_node_id(id), steps, &mut executed) },
+            Some(id),
+        )?;
+        self.sync_from_c();
+        Ok(executed)
     }
 
     pub fn send(&mut self, packet: ClusterPacket) -> Result<ClusterNetworkOutcome, ClusterError> {
-        let source = self
-            .node(packet.source)
-            .ok_or(ClusterError::UnknownNode(packet.source))?;
-        if source.state != ClusterNodeState::Running {
-            return Err(ClusterError::NodeNotRunning(packet.source));
-        }
-        let target = self
-            .node(packet.target)
-            .ok_or(ClusterError::UnknownNode(packet.target))?;
-        if target.state != ClusterNodeState::Running {
-            return Err(ClusterError::NodeNotRunning(packet.target));
-        }
-        Ok(self.network.send(packet))
+        let mut outcome = CClusterNetworkOutcome {
+            result: CClusterNetworkResult::Dropped,
+            copies: 0,
+            deliver_at: 0,
+        };
+        map_cluster_error(
+            unsafe {
+                ghostos_vm_cluster_send(
+                    &mut *self.c_cluster,
+                    to_c_node_id(packet.source),
+                    to_c_node_id(packet.target),
+                    packet.payload.as_ptr(),
+                    packet.payload.len(),
+                    &mut outcome,
+                )
+            },
+            Some(packet.source),
+        )?;
+        self.sync_from_c();
+        Ok(from_c_network_outcome(outcome))
     }
 
     pub fn advance(&mut self, ticks: u64) {
-        self.network.advance(ticks)
+        unsafe { ghostos_cluster_network_advance(&mut self.c_cluster.network, ticks) };
+        self.sync_from_c();
     }
 
     pub fn receive(&mut self, target: ClusterNodeId) -> Result<Vec<ClusterPacket>, ClusterError> {
         self.node(target).ok_or(ClusterError::UnknownNode(target))?;
-        Ok(self.network.receive(target))
+        let mut packets = vec![unsafe { std::mem::zeroed::<CClusterPacket>() }; 4096];
+        let count = unsafe {
+            ghostos_cluster_network_receive(
+                &mut self.c_cluster.network,
+                to_c_node_id(target),
+                packets.as_mut_ptr(),
+                packets.len(),
+            )
+        };
+        packets.truncate(count);
+        self.sync_from_c();
+        Ok(packets.into_iter().map(from_c_packet).collect())
     }
 
     pub fn inject_fault(&mut self, fault: ClusterFault) -> Result<(), ClusterError> {
+        let (kind, left, right, workload) = match fault {
+            ClusterFault::Partition { left, right } => (0, left, right, ClusterWorkload::Ipc),
+            ClusterFault::Reconnect { left, right } => (1, left, right, ClusterWorkload::Ipc),
+            ClusterFault::IsolateNode(id) => (2, id, id, ClusterWorkload::Ipc),
+            ClusterFault::FailNode(id) => (3, id, id, ClusterWorkload::Ipc),
+            ClusterFault::RecoverNode(id) => (4, id, id, ClusterWorkload::Ipc),
+            ClusterFault::KillNodeDuring { node, workload } => (5, node, node, workload),
+        };
+        map_cluster_error(
+            unsafe {
+                ghostos_vm_cluster_fault(
+                    &mut *self.c_cluster,
+                    kind,
+                    to_c_node_id(left),
+                    to_c_node_id(right),
+                    to_c_workload(workload),
+                )
+            },
+            Some(left),
+        )?;
         match fault {
-            ClusterFault::Partition { left, right } => {
-                self.require_node(left)?;
-                self.require_node(right)?;
-                self.network.partition(left, right);
-            }
-            ClusterFault::Reconnect { left, right } => {
-                self.require_node(left)?;
-                self.require_node(right)?;
-                self.network.reconnect(left, right);
-            }
-            ClusterFault::IsolateNode(id) => {
-                self.set_node_state(id, ClusterNodeState::Isolated)?;
-            }
-            ClusterFault::FailNode(id) => {
-                self.set_node_state(id, ClusterNodeState::Failed)?;
+            ClusterFault::FailNode(id) | ClusterFault::KillNodeDuring { node: id, .. } => {
                 self.cxl.fail_node(id)?;
-                self.shared_memory.fail_node(id);
-                self.epoch = self.epoch.saturating_add(1);
             }
             ClusterFault::RecoverNode(id) => {
-                self.set_node_state(id, ClusterNodeState::Running)?;
                 self.cxl.restore_node(id)?;
-                self.shared_memory.restore_node(id);
-                self.shared_memory.register_node(id);
-                self.epoch = self.epoch.saturating_add(1);
             }
-            ClusterFault::KillNodeDuring { node, workload } => {
-                self.set_node_state(node, ClusterNodeState::Failed)?;
-                self.cxl.fail_node(node)?;
-                self.shared_memory.fail_node(node);
-                self.epoch = self.epoch.saturating_add(1);
-                self.fault_records.push(ClusterFaultRecord {
-                    node,
-                    workload,
-                    recovered: false,
-                });
-            }
+            _ => {}
         }
+        self.sync_from_c();
         Ok(())
     }
 
     pub fn recover_last_fault(&mut self) -> Result<(), ClusterError> {
-        let index = self
+        let node = self
             .fault_records
-            .len()
-            .checked_sub(1)
-            .ok_or(ClusterError::NoFaultToRecover)?;
-        if self.fault_records[index].recovered {
-            return Ok(())
-        }
-        let node = self.fault_records[index].node;
-        self.set_node_state(node, ClusterNodeState::Running)?;
+            .last()
+            .copied()
+            .ok_or(ClusterError::NoFaultToRecover)?
+            .node;
+        map_cluster_error(unsafe { ghostos_vm_cluster_recover_last_fault(&mut *self.c_cluster) }, Some(node))?;
         self.cxl.restore_node(node)?;
-        self.shared_memory.restore_node(node);
-        self.shared_memory.register_node(node);
-        self.epoch = self.epoch.saturating_add(1);
-        self.fault_records[index].recovered = true;
+        self.sync_from_c();
         Ok(())
     }
 
-    fn require_node(&self, id: ClusterNodeId) -> Result<(), ClusterError> {
-        self.node(id)
-            .map(|_| ())
-            .ok_or(ClusterError::UnknownNode(id))
+    fn sync_from_c(&mut self) {
+        self.epoch = self.c_cluster.epoch;
+        self.heartbeat_sequences.clear();
+        for i in 0..self.c_cluster.node_count {
+            let c_node = &self.c_cluster.nodes[i];
+            let id = from_c_node_id(c_node.id);
+            self.heartbeat_sequences.push((id, c_node.heartbeat_sequence));
+        }
+        self.observed_heartbeats.clear();
+        for i in 0..self.c_cluster.observed_count {
+            let observed = &self.c_cluster.observed[i];
+            self.observed_heartbeats.push((
+                from_c_node_id(observed.target),
+                from_c_node_id(observed.source),
+                observed.sequence,
+            ));
+        }
+        self.fault_records.clear();
+        for i in 0..self.c_cluster.fault_count {
+            self.fault_records.push(from_c_fault_record(self.c_cluster.faults[i]));
+        }
+        let c_nodes = &self.c_cluster.nodes[..self.c_cluster.node_count];
+        for node in &mut self.nodes {
+            if let Some(c_node) = c_nodes.iter().find(|c_node| c_node.id.raw == node.id.raw()) {
+                node.state = from_c_node_state(c_node.state);
+                node.executed_steps = c_node.executed_steps;
+            }
+        }
+        self.sync_network_from_c();
     }
 
-    fn set_node_state(
-        &mut self,
-        id: ClusterNodeId,
-        state: ClusterNodeState,
-    ) -> Result<(), ClusterError> {
-        let node = self.node_mut(id).ok_or(ClusterError::UnknownNode(id))?;
-        node.state = state;
-        Ok(())
+    fn sync_network_from_c(&mut self) {
+        let c_network = &self.c_cluster.network;
+        self.network = ClusterNetwork::new(from_c_network_config(c_network.config))
+            .expect("C cluster network config is valid");
+        self.network.tick = c_network.tick;
+        self.network.random_state = c_network.random_state;
+        self.network.next_sequence = c_network.next_sequence;
+        self.network.partitions = c_network.partitions[..c_network.partition_count]
+            .iter()
+            .map(|entry| (from_c_node_id(entry.left), from_c_node_id(entry.right)))
+            .collect();
+        self.network.trace = c_network.trace[..c_network.trace_count]
+            .iter()
+            .copied()
+            .map(from_c_network_trace)
+            .collect();
+        self.network.delivered = c_network.delivered[..c_network.delivered_count]
+            .iter()
+            .copied()
+            .map(from_c_packet)
+            .collect();
+        self.network.in_flight = c_network.in_flight
+            .iter()
+            .copied()
+            .filter(|packet| packet.used)
+            .map(from_c_in_flight_packet)
+            .collect();
+    }
+
+    fn c_node(&self, id: ClusterNodeId) -> Option<&CClusterNode> {
+        let node = unsafe { ghostos_vm_cluster_node((&*self.c_cluster as *const CCluster).cast_mut(), to_c_node_id(id)) };
+        if node.is_null() {
+            None
+        } else {
+            Some(unsafe { &*node })
+        }
+    }
+}
+
+pub struct SharedMemoryFixtureView<'a> {
+    memory: &'a CClusterSharedMemory,
+}
+
+impl SharedMemoryFixtureView<'_> {
+    pub fn discover(&self) -> SharedMemoryDevice {
+        from_c_shared_device(unsafe { ghostos_cluster_shared_discover(self.memory) })
+    }
+
+    pub fn map(&self, node: ClusterNodeId, offset: usize, length: usize) -> Result<SharedMemoryMapping, ClusterError> {
+        let mut mapping = CClusterSharedMapping {
+            node: to_c_node_id(node),
+            offset,
+            length,
+            epoch: 0,
+        };
+        map_cluster_error(
+            unsafe { ghostos_cluster_shared_map(self.memory, to_c_node_id(node), offset, length, &mut mapping) },
+            Some(node),
+        )?;
+        Ok(from_c_shared_mapping(mapping))
+    }
+
+    pub fn read(&self, node: ClusterNodeId, offset: usize, length: usize) -> Result<Vec<u8>, ClusterError> {
+        let mut bytes = vec![0; length];
+        map_cluster_error(
+            unsafe { ghostos_cluster_shared_read(self.memory, to_c_node_id(node), offset, bytes.as_mut_ptr(), length) },
+            Some(node),
+        )?;
+        Ok(bytes)
+    }
+}
+
+pub struct SharedMemoryFixtureMut<'a> {
+    memory: &'a mut CClusterSharedMemory,
+}
+
+impl SharedMemoryFixtureMut<'_> {
+    pub fn map(&mut self, node: ClusterNodeId, offset: usize, length: usize) -> Result<SharedMemoryMapping, ClusterError> {
+        SharedMemoryFixtureView { memory: self.memory }.map(node, offset, length)
+    }
+
+    pub fn write(&mut self, node: ClusterNodeId, offset: usize, data: &[u8]) -> Result<(), ClusterError> {
+        map_cluster_error(
+            unsafe { ghostos_cluster_shared_write(self.memory, to_c_node_id(node), offset, data.as_ptr(), data.len()) },
+            Some(node),
+        )
+    }
+
+    pub fn corrupt(&mut self) {
+        unsafe { ghostos_cluster_shared_corrupt(self.memory) }
+    }
+
+    pub fn repair(&mut self) {
+        unsafe { ghostos_cluster_shared_repair(self.memory) }
+    }
+
+    pub fn hot_remove(&mut self) {
+        unsafe { ghostos_cluster_shared_hot_remove(self.memory) }
+    }
+
+    pub fn restore(&mut self) {
+        unsafe { ghostos_cluster_shared_restore(self.memory) }
+    }
+}
+
+unsafe extern "C" fn run_vm_from_c(context: *mut c_void, steps: u64, executed: *mut u64) -> CClusterError {
+    if context.is_null() {
+        return CClusterError::VmError;
+    }
+    let vm = unsafe { &mut *context.cast::<Vm>() };
+    match vm.run_for_steps(steps) {
+        Ok(report) => {
+            if !executed.is_null() {
+                unsafe { *executed = report.steps };
+            }
+            CClusterError::Ok
+        }
+        Err(_) => CClusterError::VmError,
+    }
+}
+
+fn to_c_node_id(id: ClusterNodeId) -> CClusterNodeId {
+    let mut out = CClusterNodeId { raw: 0 };
+    assert!(unsafe { ghostos_cluster_node_id_from_raw(id.raw(), &mut out) });
+    out
+}
+
+fn from_c_node_id(id: CClusterNodeId) -> ClusterNodeId {
+    ClusterNodeId::new(id.raw).expect("valid C node id")
+}
+
+fn to_c_network_config(config: ClusterNetworkConfig) -> CClusterNetworkConfig {
+    CClusterNetworkConfig {
+        latency_ticks: config.latency_ticks,
+        loss_percent: config.loss_percent,
+        duplicate_percent: config.duplicate_percent,
+        reorder: config.reorder,
+        seed: config.seed,
+    }
+}
+
+fn from_c_network_config(config: CClusterNetworkConfig) -> ClusterNetworkConfig {
+    ClusterNetworkConfig {
+        latency_ticks: config.latency_ticks,
+        loss_percent: config.loss_percent,
+        duplicate_percent: config.duplicate_percent,
+        reorder: config.reorder,
+        seed: config.seed,
+    }
+}
+
+fn to_c_heartbeat(heartbeat: ClusterHeartbeat) -> CClusterHeartbeat {
+    CClusterHeartbeat {
+        source: to_c_node_id(heartbeat.source),
+        sequence: heartbeat.sequence,
+        epoch: heartbeat.epoch,
+        tick: heartbeat.tick,
+    }
+}
+
+fn from_c_heartbeat(heartbeat: CClusterHeartbeat) -> ClusterHeartbeat {
+    ClusterHeartbeat {
+        source: from_c_node_id(heartbeat.source),
+        sequence: heartbeat.sequence,
+        epoch: heartbeat.epoch,
+        tick: heartbeat.tick,
+    }
+}
+
+fn from_c_status(status: CClusterStatus) -> ClusterStatus {
+    ClusterStatus {
+        epoch: status.epoch,
+        members: status.members,
+        running: status.running,
+        quorum: status.quorum,
+    }
+}
+
+fn to_c_workload(workload: ClusterWorkload) -> CClusterWorkload {
+    match workload {
+        ClusterWorkload::Ipc => CClusterWorkload::Ipc,
+        ClusterWorkload::FilesystemCommit => CClusterWorkload::FilesystemCommit,
+        ClusterWorkload::MemoryFetch => CClusterWorkload::MemoryFetch,
+        ClusterWorkload::Inference => CClusterWorkload::Inference,
+        ClusterWorkload::MembershipChange => CClusterWorkload::MembershipChange,
+    }
+}
+
+fn from_c_workload(workload: CClusterWorkload) -> ClusterWorkload {
+    match workload {
+        CClusterWorkload::Ipc => ClusterWorkload::Ipc,
+        CClusterWorkload::FilesystemCommit => ClusterWorkload::FilesystemCommit,
+        CClusterWorkload::MemoryFetch => ClusterWorkload::MemoryFetch,
+        CClusterWorkload::Inference => ClusterWorkload::Inference,
+        CClusterWorkload::MembershipChange => ClusterWorkload::MembershipChange,
+    }
+}
+
+fn from_c_node_state(state: CClusterNodeState) -> ClusterNodeState {
+    match state {
+        CClusterNodeState::Running => ClusterNodeState::Running,
+        CClusterNodeState::Isolated => ClusterNodeState::Isolated,
+        CClusterNodeState::Failed => ClusterNodeState::Failed,
+        CClusterNodeState::Stopped => ClusterNodeState::Stopped,
+    }
+}
+
+fn from_c_network_outcome(outcome: CClusterNetworkOutcome) -> ClusterNetworkOutcome {
+    match outcome.result {
+        CClusterNetworkResult::Queued => ClusterNetworkOutcome::Queued {
+            copies: outcome.copies,
+            deliver_at: outcome.deliver_at,
+        },
+        CClusterNetworkResult::Dropped => ClusterNetworkOutcome::Dropped,
+        CClusterNetworkResult::Partitioned => ClusterNetworkOutcome::Partitioned,
+    }
+}
+
+fn from_c_network_trace(trace: CClusterNetworkTrace) -> ClusterNetworkTrace {
+    ClusterNetworkTrace {
+        tick: trace.tick,
+        source: from_c_node_id(trace.source),
+        target: from_c_node_id(trace.target),
+        outcome: from_c_network_outcome(trace.outcome),
+    }
+}
+
+fn from_c_packet(packet: CClusterPacket) -> ClusterPacket {
+    ClusterPacket {
+        source: from_c_node_id(packet.source),
+        target: from_c_node_id(packet.target),
+        payload: packet.payload[..packet.length].to_vec(),
+    }
+}
+
+fn from_c_in_flight_packet(packet: CClusterPacket) -> InFlightPacket {
+    InFlightPacket {
+        packet: from_c_packet(packet),
+        deliver_at: packet.deliver_at,
+        sequence: packet.sequence,
+    }
+}
+
+fn from_c_fault_record(record: CClusterFaultRecord) -> ClusterFaultRecord {
+    ClusterFaultRecord {
+        node: from_c_node_id(record.node),
+        workload: from_c_workload(record.workload),
+        recovered: record.recovered,
+    }
+}
+
+fn from_c_scale_evidence(evidence: CClusterScaleEvidence) -> ClusterScaleEvidence {
+    ClusterScaleEvidence {
+        nodes: evidence.nodes,
+        discovered_nodes: evidence.discovered_nodes,
+        heartbeat_messages: evidence.heartbeat_messages,
+        control_plane_traffic_bytes: evidence.control_plane_traffic_bytes,
+        control_plane_memory_bytes: evidence.control_plane_memory_bytes,
+        convergence_ticks: evidence.convergence_ticks,
+    }
+}
+
+fn from_c_shared_device(device: CClusterSharedDevice) -> SharedMemoryDevice {
+    SharedMemoryDevice {
+        size: device.size,
+        epoch: device.epoch,
+        present: device.present,
+    }
+}
+
+fn from_c_shared_mapping(mapping: CClusterSharedMapping) -> SharedMemoryMapping {
+    SharedMemoryMapping {
+        node: from_c_node_id(mapping.node),
+        offset: mapping.offset,
+        length: mapping.length,
+        epoch: mapping.epoch,
+    }
+}
+
+fn map_cluster_error(error: CClusterError, node: Option<ClusterNodeId>) -> Result<(), ClusterError> {
+    match error {
+        CClusterError::Ok => Ok(()),
+        CClusterError::InvalidId | CClusterError::UnknownNode => {
+            Err(ClusterError::UnknownNode(node.expect("node id required")))
+        }
+        CClusterError::InvalidConfig | CClusterError::Capacity => Err(ClusterError::InvalidNetworkConfig),
+        CClusterError::DuplicateNode => Err(ClusterError::DuplicateNode(node.expect("node id required"))),
+        CClusterError::NodeNotRunning => {
+            Err(ClusterError::NodeNotRunning(node.expect("node id required")))
+        }
+        CClusterError::InvalidSharedSize => Err(ClusterError::InvalidSharedMemorySize),
+        CClusterError::InvalidSharedRange | CClusterError::BufferTooSmall => {
+            Err(ClusterError::InvalidSharedMemoryRange)
+        }
+        CClusterError::SharedUnavailable => Err(ClusterError::SharedMemoryUnavailable),
+        CClusterError::SharedCorrupt => Err(ClusterError::CorruptSharedMemory),
+        CClusterError::StaleEpoch => Err(ClusterError::StaleEpoch),
+        CClusterError::NoFault => Err(ClusterError::NoFaultToRecover),
+        CClusterError::VmError => Err(ClusterError::Vm(VmError::InvalidConfiguration)),
     }
 }
 
