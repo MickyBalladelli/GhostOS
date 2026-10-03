@@ -1392,3 +1392,13 @@ AArch64, and RISC-V. No Rust sources were edited and Cargo was not used.
 Volume generation selection remains. Logs:
 `temp/c-library-fs-transaction-build.log`,
 `temp/fs-transaction-contract-build.log`.
+
+Volume-generation progress on 2026-10-03: `c/src/volume_generation.c` flushes
+sequence 2 and then sequence 3. Loading both banks returns version 2. When the
+newest bank cannot be read, version 1 remains. Two invalid banks, or two banks
+with the same sequence, are corrupt. `build/c/volume-generation-contracts`
+passed. `make c-library` passed, and strict freestanding syntax checks passed
+for `c/src/volume_generation.c` on x86-64, AArch64, and RISC-V. No Rust sources
+were edited and Cargo was not used. Block encoding remains. Logs:
+`temp/c-library-volume-generation-build.log`,
+`temp/volume-generation-contract-build.log`.
