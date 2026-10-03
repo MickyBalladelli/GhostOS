@@ -890,3 +890,22 @@ Logs: `temp/c-library-actors-build.log`, `temp/actors-test.log`,
 `temp/actors-x86-build.log`, `temp/actors-aarch64-build.log`, and
 `temp/actors-riscv64-build.log`. Full Rust removal and broader behavior parity
 remain open.
+
+Health and recovery progress on 2026-10-03: `c/src/heal.c` now owns service
+validation, first-match duplicate detection, registration-id wrap, progress
+timestamp decisions, fault classification, recovery slot selection, generation
+wrap, and replacement-process acceptance. Duplicate detection still stops at
+the first matching service. Fault loads still follow memory, heartbeat,
+driver, then progress, and a memory fault still suppresses the later timeout
+loads. Recovery still fences before clearing the process, and a rejected
+replacement leaves the generation unchanged. Rust retains the atomic registry,
+trace emission, GhostFS checkpoint calls, and recovery runtime calls. The four
+existing heal tests passed, as did `build/c/heal-contracts`. `make c-library`,
+the inspection consumer, and host/x86/AArch64/RISC-V heal library builds
+passed. RISC-V used the temporary Clang/LLVM wrapper. Strict freestanding
+syntax checks passed for `c/src/heal.c` on all three targets. Logs:
+`temp/c-library-heal-build.log`, `temp/heal-test.log`,
+`temp/heal-consumer-build.log`, `temp/heal-contract-build.log`,
+`temp/heal-x86-build.log`, `temp/heal-aarch64-build.log`, and
+`temp/heal-riscv64-build.log`. Hot-swap, kernel patch orchestration, full Rust
+removal, and broader behavior parity remain open.
