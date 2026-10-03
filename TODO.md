@@ -504,7 +504,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/client-sdk/` — client SDK and wire protocol.
 - [ ] `crates/compute/` — tensor and accelerator compute.
 - [ ] `crates/durability/` — C owns active bounded trace recording and durable-write ordering/recovery verification, with a matching six-layer contract table and interruption callback API. Rust retains public enums, const contract tables, injector traits, and the typed event view (with parallel C records). Rust build/adapters, behavior parity, and full removal remain.
-- [ ] `crates/fabric/` — cluster fabric, memory, CXL, and DSM.
+- [ ] `crates/fabric/` — C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlapping ranges, reports the largest free page span, and authorizes an address before expiry. Cluster memory, CXL, and DSM remain. Rust sources were not changed.
 - [ ] `crates/fsd/` — filesystem daemon.
 - [ ] `crates/ghostfs/` — GhostFS storage and volume management.
 - [ ] `crates/ghostos-agent-bridge/` — C owns task-scope validation, parent and lifetime limits, expiry arithmetic, reusable grant slots, nonce and revocation wrap, consume checks, run-right unions, active-grant counts, and commit/discard decisions. Rust retains signature and lease verification, script execution, and GhostFS sandbox calls. Existing attenuation tests were executed.
@@ -516,7 +516,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostos-declarative/` — C configuration signatures in `c/src/config_signature.c` derive key ids, trust keys, and verify a signed revision against one node or a cluster. C activation in `c/src/reconfigure.c` checks history, stale revisions, and the already-active revision before commit, and rolls back to the previous revision. C system parsing in `c/src/config_parser.c` reads schema, revision, and service records. C network parsing in `c/src/config_network.c` reads hostname, interfaces, and routes, and rejects a route whose interface was not declared. C cluster parsing in `c/src/config_cluster.c` reads identity, quorum, security, resources, federation, transports, and node overrides, and rejects a quorum that asks for more votes than members. C capability parsing in `c/src/config_capability.c` reads service, resource, kind, and rights, and rejects a policy whose service was not declared. C diff in `c/src/config_diff.c` records changed areas and the nodes named by overrides. Rust sources were not changed.
 - [ ] `crates/ghostos-embedded-script/` — C owns script limits, capability names, operation masks, duplicate resources, source size, and request admission. Rust retains the Rhai engine and request storage. Existing capability tests were executed.
 - [ ] `crates/ghostos-heal/` — C owns health-service validation, duplicate detection, registration-id arithmetic, progress timestamp decisions, fault classification, and recovery slot selection, generation wrap, and replacement-process acceptance. Rust retains atomic loads and stores in their original order, trace emission, GhostFS checkpoints, and recovery runtime calls. Existing health and recovery behavior was executed; hot-swap and kernel-patch orchestration remain Rust.
-- [ ] `crates/ghostos-inference/` — C protocol checks in `c/src/inference.c` validate model names, OpenAI completion JSON, and gRPC frame flags and lengths. C scheduling in `c/src/inference_schedule.c` registers models, reserves execution slots, and checks token checkpoints. C journal commits in `c/src/inference_journal.c` encode `SYNR` recovery records, require both journal acknowledgements, and repair onto the surviving node. C cache allocation in `c/src/kv_cache.c` rounds a byte count up to whole pages, places a virtual range, and rejects a token at the reserved limit. Fabric lease placement remains. Rust sources were not changed.
+- [ ] `crates/ghostos-inference/` — C protocol checks in `c/src/inference.c` validate model names, OpenAI completion JSON, and gRPC frame flags and lengths. C scheduling in `c/src/inference_schedule.c` registers models, reserves execution slots, and checks token checkpoints. C journal commits in `c/src/inference_journal.c` encode `SYNR` recovery records, require both journal acknowledgements, and repair onto the surviving node. C cache allocation in `c/src/kv_cache.c` rounds a byte count up to whole pages, places a virtual range, and rejects a token at the reserved limit. C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlaps, and authorizes an address inside the lease. Rust sources were not changed.
 - [ ] `crates/ghostos-inspect/` — inspection and diagnostics.
 - [ ] `crates/ghostos-kvd/` — key-value daemon.
 - [ ] `crates/ghostos-mesh/` — mesh networking.
@@ -536,7 +536,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/init/` — initialization and fault domains.
 - [ ] `crates/ipc/` — inter-process communication.
 - [ ] `crates/legacy-pc-drivers/` — legacy PC block, PCI, storage, USB, and Ethernet drivers.
-- [ ] `crates/llm-runtime/` — C journal records in `c/src/inference_journal.c` encode and check `SYNR` recovery bytes, acknowledgement, failover, and replica repair. C cache allocation in `c/src/kv_cache.c` rounds ranges to pages, places virtual ranges, commits tokens, and rejects an offset at the end of the range. Fabric lease placement remains. Rust sources were not changed.
+- [ ] `crates/llm-runtime/` — C journal records in `c/src/inference_journal.c` encode and check `SYNR` recovery bytes, acknowledgement, failover, and replica repair. C cache allocation in `c/src/kv_cache.c` rounds ranges to pages, places virtual ranges, commits tokens, and rejects an offset at the end of the range. C lease placement in `c/src/fabric_lease.c` expires old grants, skips overlaps, and authorizes an address inside the lease. Rust sources were not changed.
 - [ ] `crates/logd/` — C owns operator subscribe, unsubscribe, delivery filtering, operator-event selection, dropped-counter deltas, and remaining record budget. Rust retains journal writes, trace pops, and delivery callbacks. Existing daemon tests were executed.
 - [ ] `crates/netd/` — network daemon.
 - [ ] `crates/numa/` — C owns active bounded topology construction, sparse node lookup, per-kind fallback cursors, CPU/node selection, topology replacement, locality decisions, and saturating remote-memory counters in `c/src/numa.c`. Kernel scheduling, networking, storage, and platform I/O consumers use checked-layout Rust adapters. Both existing cases have C source; Rust const constructors/getters, build/adapters, behavior parity, and full removal remain.
@@ -1227,3 +1227,14 @@ passed. `make c-library` passed, and strict freestanding syntax checks passed
 for `c/src/kv_cache.c` on x86-64, AArch64, and RISC-V. No Rust sources were
 edited and Cargo was not used. Fabric lease placement remains. Logs:
 `temp/c-library-kv-cache-build.log`, `temp/kv-cache-contract-build.log`.
+
+Fabric-lease progress on 2026-10-03: `c/src/fabric_lease.c` places an 8192-byte
+lease at `0x10000000` and the next one at `0x10002000`. The free span after the
+first lease is `0x1e000` bytes. An address past the lease is rejected, execute
+access is rejected, and the grant is expired at time 110.
+`build/c/fabric-lease-contracts` passed. `make c-library` passed, and strict
+freestanding syntax checks passed for `c/src/fabric_lease.c` on x86-64,
+AArch64, and RISC-V. No Rust sources were edited and Cargo was not used.
+Cluster memory, CXL, and DSM remain. Logs:
+`temp/c-library-fabric-lease-build.log`,
+`temp/fabric-lease-contract-build.log`.
