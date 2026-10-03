@@ -1157,3 +1157,14 @@ used. Cluster sections remain. Logs: `temp/c-library-config-network-build.log`,
 `temp/config-network-contract-build.log`.
 Logs: `temp/c-library-config-service-build.log` and
 `temp/config-service-contract-build.log`.
+
+Cluster-parser progress on 2026-10-03: `c/src/config_cluster.c` reads cluster
+identity, quorum, security, resources, federation, transports, and node
+overrides. The sample keeps id `0x1234`, hybrid discovery, attested admission,
+two of three votes, one ethernet transport, and a node 2 heartbeat of 100000.
+A quorum that requires more votes than members is invalid.
+`build/c/config-cluster-contracts` passed. `make c-library` passed, and strict
+freestanding syntax checks passed for `c/src/config_cluster.c` on x86-64,
+AArch64, and RISC-V. No Rust sources were edited and Cargo was not used.
+Capability sections remain. Logs: `temp/c-library-config-cluster-build.log`,
+`temp/config-cluster-contract-build.log`.
