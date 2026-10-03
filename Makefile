@@ -283,5 +283,8 @@ $(BUILD_DIR)/volume-symlink-contracts: c/tests/volume_symlink_contracts.c $(BUIL
 $(BUILD_DIR)/volume-mode-contracts: c/tests/volume_mode_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
 
+$(BUILD_DIR)/volume-remove-contracts: c/tests/volume_remove_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
+
 $(BUILD_DIR)/volume-checkpoint-contracts: c/tests/volume_checkpoint_contracts.c $(BUILD_DIR)/libghostos.a $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GHOSTOS_CFLAGS) $< $(BUILD_DIR)/libghostos.a -o $@
