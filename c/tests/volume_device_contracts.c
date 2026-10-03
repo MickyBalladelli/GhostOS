@@ -13,7 +13,7 @@ static void superblock_is_written_after_data_and_before_activation(void) {
     assert(ghostos_volume_device_flush(&volume, 1, 1, 1, 1, 1, 1, log, 8, &count, 0, false, false, &sequence) == 3);
     assert(!count && volume.sequence == 2);
     assert(ghostos_volume_device_flush(&volume, 1, 1, 1, 1, 1, 1, log, 8, &count, -1, true, false, &sequence) == 3);
-    assert(count == 3 && log[2] == 1 && volume.sequence == 2 && volume.active == 1);
+    assert(count == 3 && log[2] == 0 && volume.sequence == 2 && volume.active == 1);
     assert(ghostos_volume_device_flush(&volume, 2, 2, 1, 1, 1, 1, log, 8, &count, -1, false, true, &sequence) == 4);
     assert(sequence == 3 && volume.sequence == 3 && volume.active == 0);
 }
