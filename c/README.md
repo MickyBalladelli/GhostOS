@@ -567,3 +567,13 @@ Service-scale table lookup and free-slot selection use native slot views with
 explicit occupancy. First-match/free order, occupied closed/completed records,
 and error/commit ordering stay intact. Rust retains typed payloads and converts
 selected indices to records; views use stack space proportional to capacity.
+
+Whole-file volume reads use `ghostos_volume_read` in `volume_range.c`. The
+caller supplies the record checksum in `ghostos_volume_range_file.checksum`.
+The function rejects short buffers before copying, validates every block and
+the full record checksum, and rejects short, oversized, or cyclic chains.
+The required size is reported separately; the read count changes only on
+success. Existing ranged reads still allow a partial buffer. Both APIs share
+the existing resolver, which currently follows only absolute symlinks at the
+complete path. Relative links, intermediate links, and filesystem consumer
+integration still need porting.

@@ -1682,3 +1682,15 @@ strict freestanding syntax checks passed for `c/src/volume_range.c` on x86-64,
 AArch64, and RISC-V. No Rust sources were edited and Cargo was not used.
 Whole-file reads remain. Logs: `temp/c-library-volume-range-build.log`,
 `temp/volume-range-contract-build.log`.
+
+Whole-file-read progress on 2026-10-03: `ghostos_volume_read` in
+`c/src/volume_range.c` checks directory type and buffer capacity before
+copying, validates each block checksum, consumes the complete chain, and
+checks the record checksum. Short/oversized chains and cycles are corrupt.
+The required size is returned separately, and the read count changes only
+on success. Ranged reads and whole-file reads share the existing resolver.
+`make c-library` passed, and strict freestanding syntax checks passed for
+`c/src/volume_range.c` on x86-64, AArch64, and RISC-V. No tests were run.
+Rust sources were not changed and Cargo was not used. Relative/intermediate
+symlink resolution, consumer integration, behavior parity, and the full
+migration remain open. Build log: `temp/c-library-volume-read-build.log`.

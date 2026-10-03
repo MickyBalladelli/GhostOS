@@ -100,7 +100,7 @@ static int read_blocks(const ghostos_volume_range_file *file, const ghostos_volu
     *read = copied;
     return 0;
 }
-int ghostos_volume_read_at(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint64_t offset, uint8_t *output, size_t output_capacity, size_t *read) {
+static int resolve_file(const ghostos_volume_range_file *files, size_t file_count, const uint8_t *path, size_t path_length, size_t *resolved) {
     uint8_t current[GHOSTOS_VOLUME_RANGE_PATH];
     size_t length, depth, i;
     if (path_length > GHOSTOS_VOLUME_RANGE_PATH) return 4;
@@ -122,7 +122,44 @@ int ghostos_volume_read_at(const ghostos_volume_range_file *files, size_t file_c
             length = target_length;
             continue;
         }
-        return read_blocks(&files[index], blocks, block_count, offset, output, output_capacity, read);
+        *resolved = (size_t)index;
+        return 0;
     }
     return 9;
+}
+
+int ghostos_volume_read_at(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint64_t offset, uint8_t *output, size_t output_capacity, size_t *read) {
+    size_t index;
+    int status = resolve_file(files, file_count, path, path_length, &index);
+    if (status) return status;
+    return read_blocks(&files[index], blocks, block_count, offset, output, output_capacity, read);
+}
+int ghostos_volume_read(const ghostos_volume_range_file *files, size_t file_count, const ghostos_volume_range_block *blocks, size_t block_count, const uint8_t *path, size_t path_length, uint8_t *output, size_t output_capacity, size_t *read, size_t *required) {
+    const ghostos_volume_range_file *file;
+    size_t index, copied = 0, steps = 0, size;
+    uint32_t id;
+    int status = resolve_file(files, file_count, path, path_length, &index);
+    if (status) return status;
+    file = &files[index];
+    if (file->file_type == 2) return 2;
+    if (file->size > SIZE_MAX) return 5;
+    size = (size_t)file->size;
+    *required = size;
+    if (output_capacity < size) return 6;
+    id = file->first_block;
+    while (id) {
+        const ghostos_volume_range_block *block;
+        size_t length, i;
+        if (id > block_count || steps == block_count) return 5;
+        steps += 1;
+        block = &blocks[id - 1];
+        length = block->length;
+        if (!length || length > GHOSTOS_VOLUME_RANGE_DATA || length > size - copied || !block->bytes || checksum(block->bytes, length) != block->checksum) return 5;
+        for (i = 0; i < length; ++i) output[copied + i] = block->bytes[i];
+        copied += length;
+        id = block->next;
+    }
+    if (copied != size || checksum(output, copied) != file->checksum) return 5;
+    *read = copied;
+    return 0;
 }
