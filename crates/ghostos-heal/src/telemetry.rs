@@ -157,13 +157,17 @@ impl<const CAPACITY: usize> HealthMonitor<CAPACITY> {
     }
 
     pub fn register(&self, service: u64, config: HealthConfig) -> Result<HealthToken, HealthError> {
-        if service == 0 || service == RESERVED_SERVICE {
-            return Err(HealthError::InvalidService);
+        crate::native::service(service)?;
+        let mut services = [0; CAPACITY];
+        let mut loaded = 0;
+        for slot in &self.slots {
+            services[loaded] = slot.service.load(Ordering::Acquire);
+            loaded += 1;
+            if services[loaded - 1] == service {
+                break;
+            }
         }
-        if self.slots.iter().any(|slot| {
-            let registered = slot.service.load(Ordering::Acquire);
-            registered == service
-        }) {
+        if crate::native::duplicate(&services[..loaded], service) {
             return Err(HealthError::AlreadyRegistered);
         }
 
@@ -181,11 +185,9 @@ impl<const CAPACITY: usize> HealthMonitor<CAPACITY> {
                 .store(config.progress_timeout_us, Ordering::Relaxed);
             slot.driver_timeout_us
                 .store(config.driver_timeout_us, Ordering::Relaxed);
-            let registration = slot
-                .registration
-                .fetch_add(1, Ordering::Relaxed)
-                .wrapping_add(1)
-                .max(1);
+            let registration = crate::native::registration(
+                slot.registration.fetch_add(1, Ordering::Relaxed),
+            );
             slot.expected_memory_checksum
                 .store(config.expected_memory_checksum, Ordering::Relaxed);
             slot.heartbeat_seen.store(false, Ordering::Relaxed);
@@ -224,7 +226,7 @@ impl<const CAPACITY: usize> HealthMonitor<CAPACITY> {
         let slot = self.slot(token)?;
         let previous = slot.progress.swap(progress, Ordering::Relaxed);
         let was_seen = slot.progress_seen.swap(true, Ordering::Relaxed);
-        if previous != progress || !was_seen {
+        if crate::native::mark_time(previous, progress, was_seen) {
             slot.progress_at_us.store(now_us, Ordering::Relaxed);
         }
         slot.heartbeat_seen.store(true, Ordering::Relaxed);
@@ -241,7 +243,7 @@ impl<const CAPACITY: usize> HealthMonitor<CAPACITY> {
         let slot = self.slot(token)?;
         let previous = slot.driver_progress.swap(progress, Ordering::Relaxed);
         let was_seen = slot.driver_seen.swap(true, Ordering::Relaxed);
-        if previous != progress || !was_seen {
+        if crate::native::mark_time(previous, progress, was_seen) {
             slot.driver_at_us.store(now_us, Ordering::Relaxed);
         }
         Ok(())
@@ -305,30 +307,74 @@ impl<const CAPACITY: usize> HealthMonitor<CAPACITY> {
         let progress = slot.progress.load(Ordering::Relaxed);
         let driver_progress = slot.driver_progress.load(Ordering::Relaxed);
         let memory_checksum = slot.memory_checksum.load(Ordering::Acquire);
-        let fault = if slot.memory_corrupt.load(Ordering::Acquire)
-            || (slot.memory_checked.load(Ordering::Acquire)
-                && slot.expected_memory_checksum.load(Ordering::Relaxed) != 0
-                && memory_checksum != slot.expected_memory_checksum.load(Ordering::Relaxed))
-        {
-            Some(HealthFault::MemoryCorruption)
-        } else if !heartbeat_seen {
-            None
-        } else if now_us.saturating_sub(heartbeat_at_us)
-            > slot.heartbeat_timeout_us.load(Ordering::Relaxed)
-        {
-            Some(HealthFault::Deadlock)
-        } else if slot.driver_seen.load(Ordering::Relaxed)
-            && now_us.saturating_sub(slot.driver_at_us.load(Ordering::Relaxed))
-                > slot.driver_timeout_us.load(Ordering::Relaxed)
-        {
-            Some(HealthFault::DriverStall)
-        } else if slot.progress_seen.load(Ordering::Relaxed)
-            && now_us.saturating_sub(slot.progress_at_us.load(Ordering::Relaxed))
-                > slot.progress_timeout_us.load(Ordering::Relaxed)
-        {
-            Some(HealthFault::Deadlock)
-        } else {
-            None
+        let memory_corrupt = slot.memory_corrupt.load(Ordering::Acquire);
+        let mut memory_checked = false;
+        let mut expected_first = 0;
+        let mut expected_second = 0;
+        let mut compared = false;
+        if !memory_corrupt {
+            memory_checked = slot.memory_checked.load(Ordering::Acquire);
+            if memory_checked {
+                expected_first = slot.expected_memory_checksum.load(Ordering::Relaxed);
+                if expected_first != 0 {
+                    expected_second = slot.expected_memory_checksum.load(Ordering::Relaxed);
+                    compared = true;
+                }
+            }
+        }
+        let mut heartbeat_timeout_us = 0;
+        let mut have_heartbeat_timeout = false;
+        let mut driver_seen = false;
+        let mut driver_at_us = 0;
+        let mut driver_timeout_us = 0;
+        let mut have_driver = false;
+        let mut progress_seen = false;
+        let mut progress_at_us = 0;
+        let mut progress_timeout_us = 0;
+        let mut have_progress = false;
+        let memory_fault = crate::native::fault(
+            memory_corrupt, memory_checked, expected_first, memory_checksum, expected_second,
+            compared, false, now_us, heartbeat_at_us, 0, false, false, 0, 0, false, false, 0, 0, false,
+        ) == 3;
+        if !memory_fault && heartbeat_seen {
+            heartbeat_timeout_us = slot.heartbeat_timeout_us.load(Ordering::Relaxed);
+            have_heartbeat_timeout = true;
+            let heartbeat_expired = crate::native::fault(
+                false, false, 0, memory_checksum, 0, false, true, now_us, heartbeat_at_us,
+                heartbeat_timeout_us, true, false, 0, 0, false, false, 0, 0, false,
+            ) == 1;
+            if !heartbeat_expired {
+                driver_seen = slot.driver_seen.load(Ordering::Relaxed);
+                if driver_seen {
+                    driver_at_us = slot.driver_at_us.load(Ordering::Relaxed);
+                    driver_timeout_us = slot.driver_timeout_us.load(Ordering::Relaxed);
+                    have_driver = true;
+                }
+                let driver_expired = have_driver && crate::native::fault(
+                    false, false, 0, memory_checksum, 0, false, true, now_us, heartbeat_at_us,
+                    heartbeat_timeout_us, true, true, driver_at_us, driver_timeout_us, true,
+                    false, 0, 0, false,
+                ) == 2;
+                if !driver_expired {
+                    progress_seen = slot.progress_seen.load(Ordering::Relaxed);
+                    if progress_seen {
+                        progress_at_us = slot.progress_at_us.load(Ordering::Relaxed);
+                        progress_timeout_us = slot.progress_timeout_us.load(Ordering::Relaxed);
+                        have_progress = true;
+                    }
+                }
+            }
+        }
+        let fault = match crate::native::fault(
+            memory_corrupt, memory_checked, expected_first, memory_checksum, expected_second,
+            compared, heartbeat_seen, now_us, heartbeat_at_us, heartbeat_timeout_us,
+            have_heartbeat_timeout, driver_seen, driver_at_us, driver_timeout_us, have_driver,
+            progress_seen, progress_at_us, progress_timeout_us, have_progress,
+        ) {
+            1 => Some(HealthFault::Deadlock),
+            2 => Some(HealthFault::DriverStall),
+            3 => Some(HealthFault::MemoryCorruption),
+            _ => None,
         };
 
         let state = match (heartbeat_seen, fault) {

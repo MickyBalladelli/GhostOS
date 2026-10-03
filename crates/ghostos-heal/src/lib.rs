@@ -1,11 +1,14 @@
 #![no_std]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 //! Self-healing Ring 3 daemon supervision.
 //!
 //! Health signals are lock-free and fixed-capacity. Clean daemon state is
 //! pinned in GhostFS CoW checkpoints. Recovery and replacement operations call
 //! platform adapters for privileged process and IPC work.
+
+#[allow(unsafe_code)]
+mod native;
 
 mod recovery;
 mod telemetry;

@@ -515,7 +515,7 @@ Each entry names a project area containing Rust source files. Port every `.rs` f
 - [ ] `crates/ghostos-debug/` — debugging subsystem.
 - [ ] `crates/ghostos-declarative/` — declarative configuration.
 - [ ] `crates/ghostos-embedded-script/` — embedded scripting.
-- [ ] `crates/ghostos-heal/` — health and recovery.
+- [ ] `crates/ghostos-heal/` — C owns health-service validation, duplicate detection, registration-id arithmetic, progress timestamp decisions, fault classification, and recovery slot selection, generation wrap, and replacement-process acceptance. Rust retains atomic loads and stores in their original order, trace emission, GhostFS checkpoints, and recovery runtime calls. Existing health and recovery behavior was executed; hot-swap and kernel-patch orchestration remain Rust.
 - [ ] `crates/ghostos-inference/` — inference service and protocol.
 - [ ] `crates/ghostos-inspect/` — inspection and diagnostics.
 - [ ] `crates/ghostos-kvd/` — key-value daemon.
@@ -880,6 +880,13 @@ range before alignment, authority, epoch, and expiry checks, and debug address
 overflow still panics before those later checks. Remote spawn still reads the
 clock only after a route is found. Rust retains actor traits, IPC and DSM
 transport calls, typed endpoints, and directory commits after spawn or stop
-returns. The existing actor test was executed. Host, x86, AArch64, and RISC-V
-syntax checks and the balancer consumer build are recorded below when present.
-Full Rust removal remains open.
+returns. `cargo test -p ghostos-actors` passed both existing tests, and
+`build/c/actor-contracts` passed. `make c-library`, the balancer consumer, and
+host/x86/AArch64/RISC-V actor library builds passed. RISC-V used the temporary
+Clang/LLVM wrapper because Apple Clang has no RISC-V codegen backend. Strict
+freestanding syntax checks passed for `c/src/actors.c` on all three targets.
+Logs: `temp/c-library-actors-build.log`, `temp/actors-test.log`,
+`temp/actors-consumer-build.log`, `temp/actor-contract-build.log`,
+`temp/actors-x86-build.log`, `temp/actors-aarch64-build.log`, and
+`temp/actors-riscv64-build.log`. Full Rust removal and broader behavior parity
+remain open.

@@ -117,25 +117,8 @@ impl<const CAPACITY: usize> RecoveryCoordinator<CAPACITY> {
         image: u128,
         process: ProcessId,
     ) -> Result<(), RecoveryError> {
-        if service == 0 {
-            return Err(RecoveryError::InvalidService);
-        }
-        if image == 0 || process.raw() == 0 {
-            return Err(RecoveryError::InvalidProcess);
-        }
-        if self
-            .slots
-            .iter()
-            .any(|slot| slot.occupied && slot.service == service)
-        {
-            return Err(RecoveryError::AlreadyRegistered);
-        }
-        let slot = self
-            .slots
-            .iter_mut()
-            .find(|slot| !slot.occupied)
-            .ok_or(RecoveryError::Capacity)?;
-        *slot = RecoverySlot {
+        let index = crate::native::register(&self.slot_views(), service, image, process.raw())?;
+        self.slots[index] = RecoverySlot {
             occupied: true,
             service,
             image,
@@ -147,11 +130,8 @@ impl<const CAPACITY: usize> RecoveryCoordinator<CAPACITY> {
     }
 
     pub fn set_process(&mut self, service: u64, process: ProcessId) -> Result<(), RecoveryError> {
-        if process.raw() == 0 {
-            return Err(RecoveryError::InvalidProcess);
-        }
-        let slot = self.slot_mut(service)?;
-        slot.process = Some(process);
+        let index = crate::native::set_process(&self.slot_views(), service, process.raw())?;
+        self.slots[index].process = Some(process);
         Ok(())
     }
 
@@ -197,11 +177,9 @@ impl<const CAPACITY: usize> RecoveryCoordinator<CAPACITY> {
         capability: RmsMapHandle,
         runtime: &mut R,
     ) -> Result<RecoveryReceipt, RecoveryError> {
-        let slot = self.slot_mut(service)?;
-        if slot.process != Some(crashed_process) {
-            return Err(RecoveryError::StaleProcess);
-        }
-        let snapshot = slot.snapshot.ok_or(RecoveryError::NoSnapshot)?;
+        let index = crate::native::prepare(&self.slot_views(), service, crashed_process.raw())?;
+        let slot = &mut self.slots[index];
+        let snapshot = slot.snapshot.expect("prepared snapshot");
         runtime
             .fence_process(crashed_process)
             .map_err(|_| RecoveryError::FenceFailed(Status::BUSY))?;
@@ -213,7 +191,7 @@ impl<const CAPACITY: usize> RecoveryCoordinator<CAPACITY> {
             .restore_state(service, &snapshot_view)
             .map_err(|_| RecoveryError::RestoreFailed(Status::CORRUPT))?;
 
-        let generation = slot.generation.wrapping_add(1).max(1);
+        let generation = crate::native::generation(slot.generation);
         let process = runtime
             .spawn_recovered(RecoverySpawnRequest {
                 service,
@@ -222,9 +200,7 @@ impl<const CAPACITY: usize> RecoveryCoordinator<CAPACITY> {
                 snapshot,
             })
             .map_err(|_| RecoveryError::SpawnFailed(Status::BUSY))?;
-        if process.raw() == 0 || process == crashed_process {
-            return Err(RecoveryError::InvalidProcess);
-        }
+        crate::native::accept_process(process.raw(), crashed_process.raw())?;
         slot.process = Some(process);
         slot.generation = generation;
         Ok(RecoveryReceipt {
@@ -236,7 +212,8 @@ impl<const CAPACITY: usize> RecoveryCoordinator<CAPACITY> {
     }
 
     pub fn status(&self, service: u64) -> Result<RecoveryStatus, RecoveryError> {
-        let slot = self.slot(service)?;
+        let index = crate::native::find(&self.slot_views(), service)?;
+        let slot = &self.slots[index];
         Ok(RecoveryStatus {
             service: slot.service,
             image: slot.image,
@@ -259,18 +236,18 @@ impl<const CAPACITY: usize> RecoveryCoordinator<CAPACITY> {
             })
     }
 
-    fn slot(&self, service: u64) -> Result<&RecoverySlot, RecoveryError> {
-        self.slots
-            .iter()
-            .find(|slot| slot.occupied && slot.service == service)
-            .ok_or(RecoveryError::NotFound)
+    fn slot_views(&self) -> [crate::native::Slot; CAPACITY] {
+        self.slots.map(|slot| crate::native::Slot {
+            service: slot.service,
+            process: slot.process.map(|process| process.raw()).unwrap_or(0),
+            occupied: slot.occupied,
+            has_snapshot: slot.snapshot.is_some(),
+        })
     }
 
     fn slot_mut(&mut self, service: u64) -> Result<&mut RecoverySlot, RecoveryError> {
-        self.slots
-            .iter_mut()
-            .find(|slot| slot.occupied && slot.service == service)
-            .ok_or(RecoveryError::NotFound)
+        let index = crate::native::find(&self.slot_views(), service)?;
+        Ok(&mut self.slots[index])
     }
 }
 
