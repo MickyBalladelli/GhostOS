@@ -17,9 +17,9 @@ static int latest_index(const ghostos_volume_directory_record *records, size_t c
 static int invalid_path(const uint8_t *path, size_t length) {
     size_t i = 0;
     if (!length || length > 192 || path[length - 1] == '/') return 1;
+    if (path[0] == '/') i = 1;
     while (i < length) {
         size_t start = i;
-        if (path[i] == 0 || path[i] == ';') return 1;
         while (i < length && path[i] != '/') {
             if (path[i] == 0 || path[i] == ';') return 1;
             i += 1;
