@@ -1105,3 +1105,14 @@ c-library` passed, and strict freestanding syntax checks passed for
 edited and Cargo was not used. Filesystem checkpoints remain. Logs:
 `temp/c-library-backup-crypto-build.log` and
 `temp/backup-crypto-contract-build.log`.
+
+Configuration-signature progress on 2026-10-03: `c/src/config_signature.c`
+derives a 16-byte key id, rejects a second copy of the same key, and checks
+the target node before looking up the signer. An empty cluster is a target
+mismatch. A changed signature is rejected after the key is found.
+`build/c/config-signature-contracts` passed. `make c-library` passed, and
+strict freestanding syntax checks passed for `c/src/config_signature.c` on
+x86-64, AArch64, and RISC-V. No Rust sources were edited and Cargo was not
+used. Configuration parsing and activation remain. Logs:
+`temp/c-library-config-signature-build.log` and
+`temp/config-signature-contract-build.log`.
